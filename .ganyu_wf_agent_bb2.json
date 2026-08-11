@@ -1,4 +1,0 @@
-{
-  "viking://agent/memory/sessions/32dd9066-3b06-4788-906f-e5fd2dbee685": "{\"final\":\"[本地兜底] 收到：[第 1 轮 | 角色 写作者]\\n当前黑板：\\n[problem] 写一份季度报告\\n\\n请基于黑板补充你的贡献（只输出你的部（未配置联网模型；用 @tool 驱动内置能力，或 --features network 接真模型进入多步深思）\",\"session\":\"32dd9066-3b06-4788-906f-e5fd2dbee685\",\"steps\":[{\"Thought\":\"人格已加载（Pi-EQ，565 字符）\"},{\"Final\":\"[本地兜底] 收到：[第 1 轮 | 角色 写作者]\\n当前黑板：\\n[problem] 写一份季度报告\\n\\n请基于黑板补充你的贡献（只输出你的部（未配置联网模型；用 @tool 驱动内置能力，或 --features network 接真模型进入多步深思）\"}]}",
-  "viking://agent/memory/sessions/d47d6d1a-084a-4609-94c5-0faca2833fd0": "{\"final\":\"[本地兜底] 收到：[第 1 轮 | 角色 写作者]\\n当前黑板：\\n[problem] 写一份季度报告\\n\\n请基于黑板补充你的贡献（只输出你的部（未配置联网模型；用 @tool 驱动内置能力，或 --features network 接真模型进入多步深思）\",\"session\":\"d47d6d1a-084a-4609-94c5-0faca2833fd0\",\"steps\":[{\"Thought\":\"人格已加载（Pi-EQ，565 字符）\"},{\"Final\":\"[本地兜底] 收到：[第 1 轮 | 角色 写作者]\\n当前黑板：\\n[problem] 写一份季度报告\\n\\n请基于黑板补充你的贡献（只输出你的部（未配置联网模型；用 @tool 驱动内置能力，或 --features network 接真模型进入多步深思）\"}]}"
-}
