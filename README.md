@@ -17,23 +17,26 @@
 ## 架构
 
 ```
-接入层 ──→ 人格层(Pi-EQ SOUL) ──→ 路由层(Gateway: 级联+熔断+lkgp) ──→ 记忆层(Memory)
-                 │                          │                              │
-             Agent 编排 ──────────── 工具层(ToolRegistry / 插件) ──→ 进化层(SkillBook)
-                 │
+接入层 ──→ 人格层(Pi-EQ SOUL) ──→ 推理循环 loop(ReAct: 感知→推理→行动→观察) ──→ 路由层(Gateway)
+                 │                          │                                    │
+             Agent 编排 ──────────── 工具层(ToolRegistry / 插件 / 技能) ──→ 记忆层(Memory)
+                 │                                                              │
             知识/分析面：SAG 五步管道(意图→上下文→生成→校验→自进化) + MDL 语义校验
 ```
 
+- **全量 agent 工作流（ReAct）**：`core/loop` 把单条消息升级为多步「思考→行动→观察」循环，
+  由可插拔 `Reasoner` 驱动。`LocalReasoner` 离线解析 `@tool arg` 脚本 + 关键字路由到技能；
+  接真模型时由 `LlmReasoner` 取代即自动进入多步深思。失败的工具调用作为 Observation 回流（自愈）。
 - **自愈（heal）**：重试+指数退避、熔断器、多后端级联 fallback、lkgp 粘成功路径；
   外部重服务（OpenViking / OmniRoute / 真 LLM）走适配器 + 本地降级，不可用时自动兜底。
 - **可拓展（ext）**：`tool!` 宏一行注册工具；`plugins/*.json` 清单把外部命令注册为工具（**无需重编译**）；
-  成功路径经 `SkillBook` 固化为技能（自进化），失败踪迹沉淀供规避。
+  `Skill` 把多步程序固化为可生长的特性技能；成功路径经 `SkillBook` 固化（自进化），失败踪迹沉淀供规避。
 
 ## 构建与运行
 
 ```bash
 cargo build            # 默认：零网络依赖即可编译运行（LocalBackend 兜底）
-cargo test             # 11 个单元测试 + 集成测试
+cargo test             # 20 个单元测试 + 集成测试
 
 # 可选：接入真实 LLM（OpenAI 兼容端点，指向 OmniRoute / Ollama 等）
 OPENAI_API_BASE=https://... OPENAI_API_KEY=sk-... cargo run --features network -- sag "..."
@@ -45,20 +48,37 @@ OV_BASE=http://localhost:1933 cargo run -- sag "..."
 ### 子命令
 
 ```bash
+cargo run -- run "@calc 2+3"                    # 跑完整 ReAct 推理循环（多步工具调用），打印轨迹与作答
+cargo run -- run "@file_write a.txt\nhi\n@calc 1+1"   # 多步脚本：逐行执行，最后一行收尾
+cargo run -- tools                             # 列出全部内置工具与特性技能
+cargo run -- skill summarize path/to/file      # 直接调用特性技能
 cargo run -- sag "上月华东区利润最高的三个产品"   # 跑 SAG 管道（默认 examples/sample_mdl.json）
-cargo run -- selftest                            # 内置自愈/可拓展自检
-echo "@calc (1+2)*3" | cargo run -- chat         # 对话面（@name 分发到工具；无模型时本地兜底）
-cargo run -- chat --session <uuid>              # 续接指定会话（记忆中存在则注入上次轨迹，跨重启自进化）
+cargo run -- selftest                          # 内置自愈/可拓展自检（9 项）
+echo "@calc (1+2)*3" | cargo run -- chat       # 对话面（@name 分发；自然语言自动路由到技能；无模型时本地兜底）
+cargo run -- chat --session <uuid>             # 续接指定会话（记忆中存在则注入上次轨迹，跨重启自进化）
 ```
 
-> `chat` / `sag` 都会打印 `session: <uuid>`，复制该 UUID 即可用 `--session` 续接。
+> `chat` / `run` / `sag` 都会打印 `session: <uuid>`，复制该 UUID 即可用 `--session` 续接。
+
+## 内置能力
+
+**工具（`@tool` 或 `@name` 调用）**：`echo` `calc` `file_read` `file_write` `file_list`
+`exec`（本机 shell）`remember` `recall` `rag_search`，以及 `web_fetch`（仅 `--features network`）。
+`plugins/*.json` 里的外部命令也会被自动 `discover` 注册（如示例 `upper`）。
+
+**特性技能（可生长，`skill:<name>` 调用，自然语言也能自动路由）**：
+- `summarize` — 读文件并给离线摘要（行数/字符数 + 前若干字符）
+- `troubleshoot` — 按报错/现象检索记忆中的成功案例与失败沉淀，给排查指引
+- `kb_query` — 向记忆知识库提问（检索 + 摘要）
 
 ## 如何扩展
 
 1. **加工具（编译期）**：`reg.register(crate::tool!(my_tool, "描述", |i: &Value| -> GanyuResult<Value> { ... }));`
 2. **加工具（运行期，免重编译）**：在 `plugins/example.json` 加一个 `{name, command, description}`，
    后端自动 `discover` 把外部命令注册为工具（stdin 收输入，stdout 作返回值）。
-3. **接真实模型 / 记忆**：实现 `LlmBackend` / `Memory` trait，注册进 `Gateway` / `Agent` 即可，
+3. **加特性技能（可生长）**：`book.register_skill(Skill { name, description, steps })`，
+   `steps` 是 `Call{tool,arg}` / `Note{text}` / `Summarize{max_chars}` 的组合，无需改核心代码。
+4. **接真实模型 / 记忆**：实现 `LlmBackend` / `Memory` trait，注册进 `Gateway` / `Agent` 即可，
    默认 `LocalBackend` / `LocalMemory` 作为自愈兜底始终保留。
 
 ## 近期深化（架构决策见 `docs/ADR-001-architecture.md`）
@@ -78,7 +98,7 @@ src/
   error.rs      统一错误 GanyuError（thiserror）
   session.rs    会话 UUID SessionId
   heal/         自愈：重试 / 熔断 / 级联 fallback
-  core/         llm(Memory后端) / memory / agent(编排)
+  core/         llm(模型后端) / memory / agent(编排) / loop_(ReAct 推理循环)
   routing/      Gateway：级联 + 熔断 + lkgp
   ext/          Tool 抽象 / tool! 宏 / 命令插件 / SkillBook
   persona/      Pi-EQ 人格 SOUL

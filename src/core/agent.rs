@@ -1,15 +1,16 @@
 //! 对话/执行面编排：`Agent`。
 //!
-//! 把人格层（persona）、路由层（gateway）、记忆层（memory）、工具层（tools）、进化层（skills）
-//! 串成一条消息的生命周期；任何失败都走 `heal` 自愈，最终降级到本地兜底而非崩溃。
+//! 把人格层（persona）、推理循环（loop）、路由层（gateway）、记忆层（memory）、
+//! 工具层（tools）、技能层（skills）串成「感知—推理—行动—观察」的多步工作流。
+//! 任何失败都走 `heal` 自愈（工具重试、网关熔断级联），最终降级到本地兜底而非崩溃。
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use crate::core::llm::Message;
+use crate::core::loop_::{Decision, Reasoner, Step};
 use crate::core::memory::DynMemory;
 use crate::error::GanyuResult;
 use crate::ext::{SkillBook, ToolRegistry};
-use crate::heal::with_retry_async;
 use crate::persona::build_system_prompt;
 use crate::session::SessionId;
 use crate::value::Value;
@@ -19,17 +20,20 @@ pub struct Agent {
     pub memory: DynMemory,
     pub tools: Arc<ToolRegistry>,
     pub skills: Arc<SkillBook>,
+    pub reasoner: Arc<dyn Reasoner>,
     pub persona: Value,
     pub session: SessionId,
-    history: Mutex<Vec<Message>>,
+    steps: Mutex<Vec<Step>>,
 }
 
 impl Agent {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         gateway: Arc<crate::routing::Gateway>,
         memory: DynMemory,
         tools: Arc<ToolRegistry>,
         skills: Arc<SkillBook>,
+        reasoner: Arc<dyn Reasoner>,
         session: SessionId,
     ) -> Self {
         let persona = build_system_prompt("");
@@ -38,9 +42,10 @@ impl Agent {
             memory,
             tools,
             skills,
+            reasoner,
             persona,
             session,
-            history: Mutex::new(Vec::new()),
+            steps: Mutex::new(Vec::new()),
         }
     }
 
@@ -48,49 +53,88 @@ impl Agent {
         self.session
     }
 
-    fn build_messages(&self, user: &Value) -> Vec<Message> {
-        let mut v = vec![Message::system(self.persona.clone())];
-        v.extend(self.history.lock().unwrap().iter().cloned());
-        v.push(Message::user(user.clone()));
-        v
-    }
+    /// 运行一次完整推理循环（ReAct）。返回最终作答，过程写入可观测轨迹。
+    pub async fn run(&self, user_msg: &Value) -> GanyuResult<Value> {
+        self.steps.lock().unwrap().clear();
 
-    /// 处理一条用户消息：工具分发 → 模型补全（自愈）→ 降级 → 记忆提交。
-    pub async fn respond(&self, user_msg: &Value) -> GanyuResult<Value> {
-        // 工具分发：@name arg
-        if let Some((name, arg)) = parse_tool_call(user_msg.as_str()) {
-            return self.tools.call(&name, &Value(arg)).await;
+        // 人格作为首位 Thought，便于续接与可观测。
+        self.push(Step::Thought(format!(
+            "人格已加载（Pi-EQ，{} 字符）",
+            self.persona.as_str().len()
+        )));
+
+        // 自然语言意图自动路由到特性技能（无 @ 前缀时）。
+        let mut msg = user_msg.as_str().to_string();
+        if !msg.trim_start().starts_with('@') {
+            if let Some(skill) = self.skills.match_intent(&msg) {
+                msg = format!("@skill:{skill} {msg}");
+            }
         }
 
-        let messages = self.build_messages(user_msg);
-        // 自愈：网关做级联+熔断；这里再包一层重试兜底。
-        let reply = with_retry_async(|| self.gateway.complete(&messages), 2, std::time::Duration::from_millis(20))
-            .await
-            .unwrap_or_else(|_| self.degrade(user_msg));
+        let known: HashSet<String> = self.tools.names().into_iter().collect();
+        const MAX_STEPS: usize = 8;
+        let mut final_answer = Value::default();
 
-        self.history.lock().unwrap().push(Message::user(user_msg.clone()));
-        self.history.lock().unwrap().push(Message::assistant(reply.clone()));
+        for _ in 0..MAX_STEPS {
+            let decision = self.reasoner.decide(&msg, &known)?;
+            match decision {
+                Decision::Final(text) => {
+                    self.push(Step::Final(text.clone()));
+                    final_answer = Value(text);
+                    break;
+                }
+                Decision::Act { tool, args, remaining } => {
+                    self.push(Step::Action {
+                        tool: tool.clone(),
+                        args: args.clone(),
+                    });
+                    // 工具失败也作为 Observation 回流（自愈：让后续步骤据此调整）。
+                    let obs = match self.tools.call(&tool, &Value(args.clone())).await {
+                        Ok(v) => v,
+                        Err(e) => Value(format!("[工具 {tool} 执行失败：{e}]")),
+                    };
+                    self.push(Step::Observation(obs.as_str().to_string()));
+                    if remaining.trim().is_empty() {
+                        self.push(Step::Final(obs.as_str().to_string()));
+                        final_answer = obs;
+                        break;
+                    }
+                    msg = remaining;
+                }
+            }
+        }
 
-        // 记忆层自愈：会话轨迹写本地（失败不致命）
+        // 记忆层自愈：会话轨迹写本地（失败不致命）。
         let trace = Value(
             serde_json::json!({
                 "session": self.session.as_string(),
-                "user": user_msg.as_str(),
+                "steps": *self.steps.lock().unwrap(),
+                "final": final_answer.as_str(),
             })
             .to_string(),
         );
         let _ = self.memory.commit(&self.session, &trace).await;
 
-        Ok(reply)
+        Ok(final_answer)
+    }
+
+    /// 对话面入口：等价于一次完整推理循环。
+    pub async fn respond(&self, user_msg: &Value) -> GanyuResult<Value> {
+        self.run(user_msg).await
+    }
+
+    /// 取出本次会话的推理轨迹（可观测 / 调试 / 续接展示）。
+    pub fn trace(&self) -> Vec<Step> {
+        self.steps.lock().unwrap().clone()
     }
 
     /// 续接会话：若记忆中存在该会话的轨迹，注入为开场上下文（跨重启自进化）。
-    /// 返回是否有可续接的历史。
     pub async fn resume(&self) -> bool {
         match self.memory.load_session(&self.session).await {
             Ok(Some(trace)) => {
-                self.history.lock().unwrap().push(Message::system(Value(
-                    format!("[续接会话 {}] 上次轨迹：{}", self.session, trace),
+                self.push(Step::Thought(format!(
+                    "[续接会话 {}] 上次轨迹：{}",
+                    self.session, trace
                 )));
                 true
             }
@@ -98,18 +142,7 @@ impl Agent {
         }
     }
 
-    fn degrade(&self, user: &Value) -> Value {
-        let preview: String = user.as_str().chars().take(40).collect();
-        Value(format!("[降级响应] 模型层暂时不可用，已本地兜底。你的消息：{preview}"))
+    fn push(&self, s: Step) {
+        self.steps.lock().unwrap().push(s);
     }
-}
-
-/// 简单工具调用语法：`@toolname arg...`。
-fn parse_tool_call(s: &str) -> Option<(String, String)> {
-    let s = s.trim();
-    let rest = s.strip_prefix('@')?;
-    let mut it = rest.splitn(2, char::is_whitespace);
-    let name = it.next()?.to_string();
-    let arg = it.next().unwrap_or("").to_string();
-    Some((name, arg))
 }

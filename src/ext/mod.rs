@@ -3,7 +3,13 @@
 //! - `Tool` trait + `ToolRegistry`：编译期/运行期均可注册能力。
 //! - `tool!` 声明宏：一行把闭包注册成工具，零样板。
 //! - `CommandTool` + `discover`：扫描 `plugins/*.json` 清单，把外部命令注册为工具，**无需重编译即可扩展**。
-//! - `SkillBook`：把成功路径固化为技能（自进化），把失败沉淀为修正案例（自愈）。
+//! - `SkillBook`：成功路径固化为案例（自进化）+ 失败沉淀为修正（自愈）+ 容纳可生长的特性技能。
+//! - `builtins` / `skills`：具体的内置工具与内置技能实现。
+
+pub mod builtins;
+pub mod skills;
+
+pub use skills::{Skill, SkillStep, SkillTool};
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -56,6 +62,14 @@ impl ToolRegistry {
 
     pub fn names(&self) -> Vec<String> {
         self.tools.lock().unwrap().keys().cloned().collect()
+    }
+
+    pub fn get_description(&self, name: &str) -> Option<String> {
+        self.tools
+            .lock()
+            .unwrap()
+            .get(name)
+            .map(|t| t.description().to_string())
     }
 
     /// 插件发现：扫描 `dir` 下 `*.json` 清单，注册 `command` 类外部工具。
@@ -151,14 +165,18 @@ impl Tool for CommandTool {
     }
 }
 
-/// 技能书（进化层）：成功路径固化 + 失败修正沉淀。
+/// 技能书（进化层）：成功案例固化 + 失败修正沉淀 + 可生长的特性技能。
 pub struct SkillBook {
     memory: DynMemory,
+    skills: Mutex<Vec<Skill>>,
 }
 
 impl SkillBook {
     pub fn new(memory: DynMemory) -> Self {
-        SkillBook { memory }
+        SkillBook {
+            memory,
+            skills: Mutex::new(Vec::new()),
+        }
     }
 
     /// 把一次成功（intent → action → result）写回 `agent/memory/cases`（自进化）。
@@ -187,6 +205,60 @@ impl SkillBook {
         );
         self.memory.put(&uri, &payload).await
     }
+
+    // ---- 特性技能（可生长） ----
+
+    /// 注册一个内置/外部特性技能。
+    pub fn register_skill(&self, skill: Skill) {
+        self.skills.lock().unwrap().push(skill);
+    }
+
+    /// 取出某个技能的副本（供 `SkillTool` 执行）。
+    pub fn get_skill(&self, name: &str) -> Option<Skill> {
+        self.skills
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|s| s.name == name)
+            .cloned()
+    }
+
+    pub fn skill_names(&self) -> Vec<String> {
+        self.skills.lock().unwrap().iter().map(|s| s.name.clone()).collect()
+    }
+
+    pub fn skill_specs(&self) -> Vec<String> {
+        self.skills
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|s| format!("skill:{} - {}", s.name, s.description))
+            .collect()
+    }
+
+    /// 关键字路由：把自然语言意图落到已注册技能（无命中返回 None）。
+    pub fn match_intent(&self, query: &str) -> Option<String> {
+        let q = query.to_lowercase();
+        let rules: &[(&str, &str)] = &[
+            ("总结", "summarize"),
+            ("摘要", "summarize"),
+            ("summarize", "summarize"),
+            ("排查", "troubleshoot"),
+            ("故障", "troubleshoot"),
+            ("报错", "troubleshoot"),
+            ("troubleshoot", "troubleshoot"),
+            ("error", "troubleshoot"),
+            ("知识库", "kb_query"),
+            ("kb_query", "kb_query"),
+            ("查一下", "kb_query"),
+        ];
+        for (kw, skill) in rules {
+            if q.contains(kw) && self.get_skill(skill).is_some() {
+                return Some(skill.to_string());
+            }
+        }
+        None
+    }
 }
 
 fn slug(s: &str) -> String {
@@ -195,20 +267,6 @@ fn slug(s: &str) -> String {
         .take(40)
         .collect::<String>()
         .to_lowercase()
-}
-
-/// 注册内置工具（证明 `@tool`/宏机制可用）。
-pub fn register_builtins(reg: &ToolRegistry) {
-    reg.register(crate::tool!(echo, "回显输入，便于联调", |input: &Value| -> GanyuResult<Value> {
-        Ok(input.clone())
-    }));
-    reg.register(crate::tool!(calc, "安全求值简单算术(+ - * / 与括号)", |input: &Value| -> GanyuResult<Value> {
-        if !regex_fullmatch(r"[0-9+\-*/().\s]+", input.as_str()) {
-            return Err(GanyuError::ToolFailed("calc".into(), "仅支持数字与 + - * / ( )".into()));
-        }
-        let r = eval_expr(input.as_str())?;
-        Ok(Value(r.to_string()))
-    }));
 }
 
 /// 声明宏：把闭包注册为工具。`body` 类型为 `Fn(&Value) -> GanyuResult<Value>`。
@@ -233,109 +291,27 @@ macro_rules! tool {
     }};
 }
 
-fn regex_fullmatch(pat: &str, s: &str) -> bool {
-    use std::sync::OnceLock;
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(pat).unwrap()).is_match(s)
-}
-
-/// 极简安全算术求值（仅 + - * / 与括号，f64）。无第三方依赖。
-fn eval_expr(s: &str) -> GanyuResult<f64> {
-    let chars: Vec<char> = s.chars().filter(|c| !c.is_whitespace()).collect();
-    let mut pos = 0usize;
-
-    fn parse_expr(chars: &[char], pos: &mut usize) -> GanyuResult<f64> {
-        let mut left = parse_term(chars, pos)?;
-        while *pos < chars.len() {
-            match chars[*pos] {
-                '+' => {
-                    *pos += 1;
-                    left += parse_term(chars, pos)?;
-                }
-                '-' => {
-                    *pos += 1;
-                    left -= parse_term(chars, pos)?;
-                }
-                _ => break,
-            }
-        }
-        Ok(left)
-    }
-    fn parse_term(chars: &[char], pos: &mut usize) -> GanyuResult<f64> {
-        let mut left = parse_factor(chars, pos)?;
-        while *pos < chars.len() && (chars[*pos] == '*' || chars[*pos] == '/') {
-            let op = chars[*pos];
-            *pos += 1;
-            let right = parse_factor(chars, pos)?;
-            if op == '*' {
-                left *= right;
-            } else {
-                if right == 0.0 {
-                    return Err(GanyuError::ToolFailed("calc".into(), "除零".into()));
-                }
-                left /= right;
-            }
-        }
-        Ok(left)
-    }
-    fn parse_factor(chars: &[char], pos: &mut usize) -> GanyuResult<f64> {
-        if *pos < chars.len() && chars[*pos] == '-' {
-            *pos += 1;
-            return Ok(-parse_factor(chars, pos)?);
-        }
-        if *pos < chars.len() && chars[*pos] == '(' {
-            *pos += 1;
-            let v = parse_expr(chars, pos)?;
-            if *pos < chars.len() && chars[*pos] == ')' {
-                *pos += 1;
-            } else {
-                return Err(GanyuError::ToolFailed("calc".into(), "括号不匹配".into()));
-            }
-            return Ok(v);
-        }
-        let start = *pos;
-        while *pos < chars.len() && (chars[*pos].is_ascii_digit() || chars[*pos] == '.') {
-            *pos += 1;
-        }
-        if start == *pos {
-            return Err(GanyuError::ToolFailed("calc".into(), "无效数字".into()));
-        }
-        chars[start..*pos]
-            .iter()
-            .collect::<String>()
-            .parse::<f64>()
-            .map_err(|_| GanyuError::ToolFailed("calc".into(), "数字解析失败".into()))
-    }
-
-    let r = parse_expr(&chars, &mut pos)?;
-    if pos != chars.len() {
-        return Err(GanyuError::ToolFailed("calc".into(), "多余字符".into()));
-    }
-    Ok(r)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn tool_registry_echo() {
-        let reg = ToolRegistry::new();
-        register_builtins(&reg);
-        let out = reg.call("echo", &Value("hi".into())).await.unwrap();
-        assert_eq!(out, Value("hi".into()));
-    }
-
-    #[tokio::test]
-    async fn tool_calc_arithmetic() {
-        let reg = ToolRegistry::new();
-        register_builtins(&reg);
-        let out = reg.call("calc", &Value("(1+2)*3".into())).await.unwrap();
-        assert_eq!(out, Value("9".to_string()));
-    }
-
     #[test]
     fn skill_slug_is_stable() {
         assert_eq!(slug("上月 华东 利润"), "上月华东利润");
+    }
+
+    #[test]
+    fn skill_book_register_and_match() {
+        let book = SkillBook::new(Arc::new(crate::core::memory::LocalMemory::new(
+            ".ganyu_skillbook_test_mem.json",
+        )));
+        book.register_skill(Skill {
+            name: "summarize".into(),
+            description: "摘要".into(),
+            steps: vec![],
+        });
+        assert_eq!(book.match_intent("帮我总结一下"), Some("summarize".to_string()));
+        assert_eq!(book.match_intent("今天天气"), None);
+        let _ = std::fs::remove_file(".ganyu_skillbook_test_mem.json");
     }
 }

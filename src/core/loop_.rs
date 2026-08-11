@@ -1,0 +1,135 @@
+//! 推理循环（ReAct）：把对话面升级为「感知—推理—行动—观察」的多步 agent 工作流。
+//!
+//! 对齐开源 agent 的核心循环：Plan / Act / Observe。由可插拔 `Reasoner` 驱动每一步决策：
+//! - `LocalReasoner`：离线确定性决策（`@tool arg` 脚本语法 + 关键字路由到技能），保证零网络可跑。
+//! - `LlmReasoner`（预留）：接真实模型后产出 JSON/ReAct 动作，自动进入多步深思。
+//!
+//! 这是「全量流程」的主心骨：单条消息可被拆成多步工具调用，每步产出 Observation 再反思，
+//! 直到 `Final`。失败的工具调用会作为 Observation 回流（自愈：agent 据此调整而非崩溃）。
+
+use std::collections::HashSet;
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::GanyuResult;
+
+/// 一次推理轨迹的原子步骤（可序列化为 JSON 落到会话记忆，供可观测与续接）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Step {
+    /// 推理/思考（离线时记录人格与意图路由）。
+    Thought(String),
+    /// 调用某个工具（普通工具或 `skill:` 技能）。
+    Action { tool: String, args: String },
+    /// 工具返回（或失败文本，自愈回流）。
+    Observation(String),
+    /// 最终作答。
+    Final(String),
+}
+
+/// 推理器的单步决策。
+#[derive(Debug)]
+pub enum Decision {
+    Final(String),
+    Act {
+        tool: String,
+        args: String,
+        /// 同一脚本中本行之后的剩余内容；为空表示这是最后一步。
+        remaining: String,
+    },
+}
+
+/// 推理器抽象：把当前用户消息映射为下一步决策。可插拔，便于离线/联网两套实现。
+pub trait Reasoner: Send + Sync {
+    fn decide(&self, user_msg: &str, known: &HashSet<String>) -> GanyuResult<Decision>;
+}
+
+/// 离线推理器：解析 `@tool arg` 脚本；多行脚本逐行执行，最后一行若无 `@` 则收尾。
+///
+/// 离线即可演示完整的多步循环；接真模型时由 `LlmReasoner` 取代，能力自动升级。
+pub struct LocalReasoner;
+
+impl Reasoner for LocalReasoner {
+    fn decide(&self, user_msg: &str, known: &HashSet<String>) -> GanyuResult<Decision> {
+        for line in user_msg.lines() {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix('@') {
+                let mut it = rest.splitn(2, char::is_whitespace);
+                let tool = it.next().unwrap_or("").to_string();
+                let args = it.next().unwrap_or("").trim().to_string();
+                if !tool.is_empty() && known.contains(&tool) {
+                    let remaining = strip_first_tool_line(user_msg, line);
+                    return Ok(Decision::Act { tool, args, remaining });
+                }
+            }
+        }
+        Ok(Decision::Final(default_fallback(user_msg)))
+    }
+}
+
+/// 去掉脚本中首个被命中的 `@tool` 行，返回剩余内容（供循环下一步）。
+fn strip_first_tool_line(msg: &str, line: &str) -> String {
+    let mut out = String::new();
+    let mut skipped = false;
+    for l in msg.lines() {
+        if !skipped && l.trim() == line {
+            skipped = true;
+            continue;
+        }
+        out.push_str(l);
+        out.push('\n');
+    }
+    out.trim().to_string()
+}
+
+fn default_fallback(msg: &str) -> String {
+    let preview: String = msg.chars().take(60).collect();
+    format!(
+        "[本地兜底] 收到：{preview}（未配置联网模型；用 @tool 驱动内置能力，或 --features network 接真模型进入多步深思）"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_reasoner_routes_tool() {
+        let mut known = HashSet::new();
+        known.insert("calc".to_string());
+        let d = LocalReasoner
+            .decide("@calc 1+1", &known)
+            .unwrap();
+        match d {
+            Decision::Act { tool, args, remaining } => {
+                assert_eq!(tool, "calc");
+                assert_eq!(args, "1+1");
+                assert!(remaining.is_empty());
+            }
+            _ => panic!("expected Act"),
+        }
+    }
+
+    #[test]
+    fn local_reasoner_multistep_keeps_remaining() {
+        let mut known = HashSet::new();
+        known.insert("echo".to_string());
+        known.insert("calc".to_string());
+        let script = "@echo step1\n@calc 2+2\n收尾";
+        let d = LocalReasoner.decide(script, &known).unwrap();
+        match d {
+            Decision::Act { tool, remaining, .. } => {
+                assert_eq!(tool, "echo");
+                assert!(remaining.contains("calc 2+2"));
+                assert!(remaining.contains("收尾"));
+            }
+            _ => panic!("expected Act"),
+        }
+    }
+
+    #[test]
+    fn local_reasoner_final_when_no_tool() {
+        let known = HashSet::new();
+        let d = LocalReasoner.decide("你好", &known).unwrap();
+        assert!(matches!(d, Decision::Final(_)));
+    }
+}
