@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::error::GanyuResult;
+use crate::session::SessionId;
 use crate::value::Value;
 
 /// 一次检索命中。
@@ -27,7 +28,10 @@ pub trait Memory: Send + Sync {
     async fn put(&self, uri: &str, content: &Value) -> GanyuResult<()>;
     async fn get(&self, uri: &str) -> GanyuResult<Option<Value>>;
     async fn search(&self, query: &str, uri: &str) -> GanyuResult<Vec<MemoryHit>>;
-    async fn commit(&self, trace: &Value) -> GanyuResult<()>;
+    /// 提交一次会话轨迹，键入真实会话 UUID（自愈/自进化的锚点）。
+    async fn commit(&self, session: &SessionId, trace: &Value) -> GanyuResult<()>;
+    /// 读回某会话的最近轨迹，用于跨重启续接（自进化）。
+    async fn load_session(&self, session: &SessionId) -> GanyuResult<Option<Value>>;
 }
 
 /// 便于统一持有。
@@ -95,11 +99,16 @@ impl Memory for LocalMemory {
         Ok(hits)
     }
 
-    async fn commit(&self, trace: &Value) -> GanyuResult<()> {
-        let key = format!("viking://agent/memory/sessions/{}", crate::session::SessionId::new());
+    async fn commit(&self, session: &SessionId, trace: &Value) -> GanyuResult<()> {
+        let key = format!("viking://agent/memory/sessions/{}", session.as_string());
         self.store.lock().unwrap().insert(key, trace.clone());
         self.save();
         Ok(())
+    }
+
+    async fn load_session(&self, session: &SessionId) -> GanyuResult<Option<Value>> {
+        let key = format!("viking://agent/memory/sessions/{}", session.as_string());
+        Ok(self.store.lock().unwrap().get(&key).cloned())
     }
 }
 
@@ -131,8 +140,11 @@ impl Memory for OpenVikingMemory {
     async fn search(&self, query: &str, uri: &str) -> GanyuResult<Vec<MemoryHit>> {
         self.inner.search(query, uri).await
     }
-    async fn commit(&self, trace: &Value) -> GanyuResult<()> {
-        self.inner.commit(trace).await
+    async fn commit(&self, session: &SessionId, trace: &Value) -> GanyuResult<()> {
+        self.inner.commit(session, trace).await
+    }
+    async fn load_session(&self, session: &SessionId) -> GanyuResult<Option<Value>> {
+        self.inner.load_session(session).await
     }
 }
 
@@ -151,5 +163,17 @@ mod tests {
         let hits = m.search("利润", "viking://").await.unwrap();
         assert!(!hits.is_empty());
         let _ = std::fs::remove_file(".ganyu_test_mem.json");
+    }
+
+    #[tokio::test]
+    async fn session_trace_persists_and_resumes() {
+        let sid = SessionId::new();
+        let m = LocalMemory::new(".ganyu_test_sess.json");
+        m.commit(&sid, &Value("user: 上月华东利润Top3".into()))
+            .await
+            .unwrap();
+        let loaded = m.load_session(&sid).await.unwrap();
+        assert_eq!(loaded, Some(Value("user: 上月华东利润Top3".into())));
+        let _ = std::fs::remove_file(".ganyu_test_sess.json");
     }
 }

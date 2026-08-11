@@ -79,9 +79,23 @@ impl Agent {
             })
             .to_string(),
         );
-        let _ = self.memory.commit(&trace).await;
+        let _ = self.memory.commit(&self.session, &trace).await;
 
         Ok(reply)
+    }
+
+    /// 续接会话：若记忆中存在该会话的轨迹，注入为开场上下文（跨重启自进化）。
+    /// 返回是否有可续接的历史。
+    pub async fn resume(&self) -> bool {
+        match self.memory.load_session(&self.session).await {
+            Ok(Some(trace)) => {
+                self.history.lock().unwrap().push(Message::system(Value(
+                    format!("[续接会话 {}] 上次轨迹：{}", self.session, trace),
+                )));
+                true
+            }
+            _ => false,
+        }
     }
 
     fn degrade(&self, user: &Value) -> Value {

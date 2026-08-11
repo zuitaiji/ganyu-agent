@@ -16,8 +16,11 @@ pub enum GanyuError {
     #[error("validation failed: {0:?}")]
     ValidationFailed(Vec<String>),
 
-    #[error("backend '{0}' unavailable")]
+    #[error("backend '{0}' unavailable (retryable)")]
     BackendUnavailable(String),
+
+    #[error("backend '{0}' fatal (auth/bad request, not retryable)")]
+    BackendError(String),
 
     #[error("plugin error: {0}")]
     Plugin(String),

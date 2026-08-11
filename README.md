@@ -33,7 +33,7 @@
 
 ```bash
 cargo build            # 默认：零网络依赖即可编译运行（LocalBackend 兜底）
-cargo test             # 10 个单元测试 + 集成测试
+cargo test             # 11 个单元测试 + 集成测试
 
 # 可选：接入真实 LLM（OpenAI 兼容端点，指向 OmniRoute / Ollama 等）
 OPENAI_API_BASE=https://... OPENAI_API_KEY=sk-... cargo run --features network -- sag "..."
@@ -48,7 +48,10 @@ OV_BASE=http://localhost:1933 cargo run -- sag "..."
 cargo run -- sag "上月华东区利润最高的三个产品"   # 跑 SAG 管道（默认 examples/sample_mdl.json）
 cargo run -- selftest                            # 内置自愈/可拓展自检
 echo "@calc (1+2)*3" | cargo run -- chat         # 对话面（@name 分发到工具；无模型时本地兜底）
+cargo run -- chat --session <uuid>              # 续接指定会话（记忆中存在则注入上次轨迹，跨重启自进化）
 ```
+
+> `chat` / `sag` 都会打印 `session: <uuid>`，复制该 UUID 即可用 `--session` 续接。
 
 ## 如何扩展
 
@@ -57,6 +60,15 @@ echo "@calc (1+2)*3" | cargo run -- chat         # 对话面（@name 分发到�
    后端自动 `discover` 把外部命令注册为工具（stdin 收输入，stdout 作返回值）。
 3. **接真实模型 / 记忆**：实现 `LlmBackend` / `Memory` trait，注册进 `Gateway` / `Agent` 即可，
    默认 `LocalBackend` / `LocalMemory` 作为自愈兜底始终保留。
+
+## 近期深化（架构决策见 `docs/ADR-001-architecture.md`）
+
+- **会话 UUID 真正贯通记忆**：修复 `Memory::commit` 原先 `SessionId::new()` 造随机会话的缺陷，改为显式传入真实会话；
+  新增 `load_session` + `Agent::resume()`，支持 `--session <uuid>` 跨重启续接（自进化）。记忆层本身已文件持久化（`LocalMemory` 落盘 JSON，`SkillBook` 走它）。
+- **真实 LLM 后端错误分流**：`OpenAiBackend`（`--features network`）加 30s 超时、复用 client，
+  并把 5xx/408/429 映射为可重试的 `BackendUnavailable`、4xx 映射为致命的 `BackendError`，
+  与网关熔断 + Agent 重试协同（只对"可重试"类生效，避免放大故障）。新增 `BackendError` 错误变体。
+- **默认零网络依赖不变**：native 后端仍仅 `LocalBackend` 兜底；network 特性才引入 reqwest/TLS。
 
 ## 目录
 

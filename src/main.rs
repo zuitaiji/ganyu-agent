@@ -23,10 +23,30 @@ use ganyu_agent::{GanyuError, GanyuResult};
 
 #[tokio::main]
 async fn main() -> GanyuResult<()> {
-    let args: Vec<String> = std::env::args().collect();
-    let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("chat");
-
-    let session = SessionId::new();
+    let raw: Vec<String> = std::env::args().collect();
+    let mut session = SessionId::new();
+    let mut cmd: Option<String> = None;
+    let mut positional: Vec<String> = Vec::new();
+    let mut k = 1;
+    while k < raw.len() {
+        if raw[k] == "--session" {
+            if let Some(s) = raw.get(k + 1) {
+                if let Ok(u) = uuid::Uuid::parse_str(s) {
+                    session = SessionId(u);
+                }
+            }
+            k += 2;
+            continue;
+        }
+        if cmd.is_none() {
+            cmd = Some(raw[k].clone());
+            k += 1;
+            continue;
+        }
+        positional.push(raw[k].clone());
+        k += 1;
+    }
+    let cmd = cmd.as_deref().unwrap_or("chat");
     let memory: DynMemory = Arc::new(LocalMemory::new(".ganyu_memory.json"));
     let mut gateway = Gateway::new();
     gateway.register(Arc::new(LocalBackend) as DynBackend);
@@ -56,10 +76,10 @@ async fn main() -> GanyuResult<()> {
 
     match cmd {
         "sag" => {
-            let query = args
-                .get(2)
-                .cloned()
-                .unwrap_or_else(|| "上月华东区利润最高的三个产品".to_string());
+        let query = positional
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "上月华东区利润最高的三个产品".to_string());
             let mdl = Mdl::load("examples/sample_mdl.json")?;
             let pipeline = SagPipeline {
                 mdl: Arc::new(mdl),
@@ -81,6 +101,11 @@ async fn main() -> GanyuResult<()> {
         }
         _ => {
             use std::io::Read;
+            println!("session: {session}");
+            let resumed = agent.resume().await;
+            if resumed {
+                println!("[已续接会话 {}]", session);
+            }
             let mut buf = String::new();
             std::io::stdin().read_to_string(&mut buf).ok();
             let msg = buf.trim().to_string();
@@ -95,9 +120,6 @@ async fn main() -> GanyuResult<()> {
 }
 
 async fn selftest() {
-    use ganyu_agent::core::memory::{DynMemory, LocalMemory};
-    use ganyu_agent::ext::{register_builtins, SkillBook, ToolRegistry};
-
     let mut pass = 0usize;
     let mut fail = 0usize;
     macro_rules! check {
@@ -153,6 +175,16 @@ async fn selftest() {
         "SAG 产出合法 SQL",
         out.sql.as_str().contains("SELECT") && out.sql.as_str().contains("profit")
     );
+
+    // 2b) 会话记忆持久化 + 续接
+    let sid = SessionId::new();
+    let mem2: DynMemory = Arc::new(LocalMemory::new(".ganyu_selftest_sess.json"));
+    mem2.commit(&sid, &Value("user: 上月华东利润Top3".into()))
+        .await
+        .unwrap();
+    let loaded = mem2.load_session(&sid).await.unwrap();
+    check!("会话轨迹可持久化并续接", loaded == Some(Value("user: 上月华东利润Top3".into())));
+    let _ = std::fs::remove_file(".ganyu_selftest_sess.json");
 
     // 3) 工具注册与调用
     let tools = ToolRegistry::new();

@@ -243,7 +243,7 @@ impl SagPipeline {
             })
             .to_string(),
         );
-        self.memory.commit(&trace).await?;
+        self.memory.commit(&self.session, &trace).await?;
 
         Ok(SagOutput { sql: Value(sql), result, verdict })
     }

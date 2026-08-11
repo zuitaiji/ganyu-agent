@@ -8,6 +8,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::error::GanyuResult;
+#[cfg(feature = "network")]
+use crate::error::GanyuError;
 use crate::value::Value;
 
 /// 对话角色（Rust `enum` 表达类型安全，而非裸字符串）。
@@ -73,9 +75,10 @@ impl LlmBackend for LocalBackend {
     }
 }
 
-/// 真实联网后端（可选编译）。
+/// 真实联网后端（可选编译）。OpenAI 兼容 `/v1` 端点，可指向 OmniRoute / Ollama / 任意网关。
 #[cfg(feature = "network")]
 pub struct OpenAiBackend {
+    client: reqwest::Client,
     base_url: String,
     api_key: String,
     model: String,
@@ -85,7 +88,12 @@ pub struct OpenAiBackend {
 #[cfg(feature = "network")]
 impl OpenAiBackend {
     pub fn new(base_url: &str, api_key: &str, model: &str) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         OpenAiBackend {
+            client,
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: api_key.to_string(),
             model: model.to_string(),
@@ -106,14 +114,24 @@ impl LlmBackend for OpenAiBackend {
             "messages": messages,
             "temperature": 0,
         });
-        let client = reqwest::Client::new();
-        let resp = client
+        let resp = self
+            .client
             .post(format!("{}/chat/completions", self.base_url))
             .bearer_auth(&self.api_key)
             .json(&body)
             .send()
             .await
-            .map_err(|e| crate::error::GanyuError::Http(e.to_string()))?;
+            .map_err(|e| GanyuError::BackendUnavailable(format!("network: {e}")))?;
+        let status = resp.status();
+        if !status.is_success() {
+            // 自愈分流：5xx / 408 / 429 视为可重试（网关熔断+重试会接管）；
+            // 4xx（鉴权/请求错误）视为致命，不应盲目重试放大故障。
+            let detail = resp.text().await.unwrap_or_default();
+            if status.is_server_error() || status == 408 || status == 429 {
+                return Err(GanyuError::BackendUnavailable(format!("{status} {detail}")));
+            }
+            return Err(GanyuError::BackendError(format!("{status} {detail}")));
+        }
         let json: serde_json::Value = resp
             .json()
             .await
