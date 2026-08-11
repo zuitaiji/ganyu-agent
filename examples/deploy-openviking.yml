@@ -1,0 +1,60 @@
+# OpenViking 自托管 — ganyu-agent 统一记忆底座
+# 参考：Red Hat "Deploy OpenViking on OpenShift AI" 模式（简化单机版）
+# 说明：OpenViking 服务本身轻量（:1933 REST），但依赖两个模型服务：
+#   - embedding 模型（生成向量索引，用于目录递归检索）
+#   - VLM / LLM（导入资源时生成 L0 摘要 + L1 概览，以及多模态理解）
+# 下面把模型服务也拉起（Qwen3 系列，需 GPU；无 GPU 时把端点改指向你已有的
+#   OpenAI/LiteLLM/火山引擎兼容端点，并删掉 embedding/vlm 两个 service）。
+
+services:
+  openviking:
+    image: quay.io/aicatalyst/openviking:latest
+    container_name: ganyu-openviking
+    ports:
+      - "1933:1933"
+    environment:
+      OV_EMBEDDING_ENDPOINT: http://embedding:8000/v1
+      OV_EMBEDDING_MODEL: Qwen3-Embedding-0.6B
+      OV_VLM_ENDPOINT: http://vlm:8000/v1
+      OV_VLM_MODEL: Qwen3-32B
+      OV_ROOT_KEY: "${OV_ROOT_KEY:-change-me-with-openssl-rand-hex-16}"
+      OV_DATA_DIR: /data
+    volumes:
+      - ov-data:/data
+    depends_on:
+      - embedding
+      - vlm
+    restart: unless-stopped
+
+  embedding:
+    image: vllm/vllm-openai:latest
+    container_name: ganyu-ov-embedding
+    command: --model Qwen/Qwen3-Embedding-0.6B --served-model-name Qwen3-Embedding-0.6B --port 8000
+    ports:
+      - "19001:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  vlm:
+    image: vllm/vllm-openai:latest
+    container_name: ganyu-ov-vlm
+    command: --model Qwen/Qwen3-32B --served-model-name Qwen3-32B --port 8000
+    ports:
+      - "19002:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  ov-data:

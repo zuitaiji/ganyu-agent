@@ -1,0 +1,7 @@
+[
+  {
+    "name": "upper",
+    "command": "python plugins/upper.py",
+    "description": "把输入转为大写（演示命令插件，无需重编译即可扩展 agent 能力）"
+  }
+]

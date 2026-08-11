@@ -1,0 +1,64 @@
+{
+  "version": "0.1",
+  "models": [
+    {
+      "name": "region",
+      "refSql": "SELECT * FROM region",
+      "primaryKey": "id",
+      "columns": [
+        { "name": "id", "type": "INTEGER", "expression": "id", "isCalculated": false },
+        { "name": "name", "type": "VARCHAR", "expression": "name", "isCalculated": false },
+        { "name": "zone", "type": "VARCHAR", "expression": "zone", "isCalculated": false }
+      ]
+    },
+    {
+      "name": "product",
+      "refSql": "SELECT * FROM product",
+      "primaryKey": "id",
+      "columns": [
+        { "name": "id", "type": "INTEGER", "expression": "id", "isCalculated": false },
+        { "name": "name", "type": "VARCHAR", "expression": "name", "isCalculated": false },
+        { "name": "category", "type": "VARCHAR", "expression": "category", "isCalculated": false }
+      ]
+    },
+    {
+      "name": "sales",
+      "refSql": "SELECT * FROM sales",
+      "primaryKey": "id",
+      "columns": [
+        { "name": "id", "type": "INTEGER", "expression": "id", "isCalculated": false },
+        { "name": "product_id", "type": "INTEGER", "expression": "product_id", "isCalculated": false },
+        { "name": "region_id", "type": "INTEGER", "expression": "region_id", "isCalculated": false },
+        { "name": "revenue", "type": "DOUBLE", "expression": "revenue", "isCalculated": false },
+        { "name": "cost", "type": "DOUBLE", "expression": "cost", "isCalculated": false },
+        { "name": "tax", "type": "DOUBLE", "expression": "tax", "isCalculated": false },
+        { "name": "period", "type": "DATE", "expression": "period", "isCalculated": false }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "name": "sales_product",
+      "models": ["sales", "product"],
+      "joinType": "MANY_TO_ONE",
+      "condition": "sales.product_id = product.id"
+    },
+    {
+      "name": "sales_region",
+      "models": ["sales", "region"],
+      "joinType": "MANY_TO_ONE",
+      "condition": "sales.region_id = region.id"
+    }
+  ],
+  "metrics": [
+    {
+      "name": "profit",
+      "model": "sales",
+      "type": "NUMBER",
+      "expression": "SUM(revenue - cost - tax)",
+      "dimension": ["region.name", "product.category"]
+    }
+  ],
+  "views": [],
+  "cubes": []
+}
