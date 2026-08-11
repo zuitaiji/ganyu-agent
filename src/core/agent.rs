@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::core::loop_::{Decision, Reasoner, Step};
 use crate::core::memory::DynMemory;
+use crate::core::unit::{RunContext, Unit};
 use crate::error::GanyuResult;
 use crate::ext::{SkillBook, ToolRegistry};
 use crate::persona::build_system_prompt;
@@ -22,6 +23,7 @@ pub struct Agent {
     pub skills: Arc<SkillBook>,
     pub reasoner: Arc<dyn Reasoner>,
     pub persona: Value,
+    pub role: String,
     pub session: SessionId,
     steps: Mutex<Vec<Step>>,
 }
@@ -36,7 +38,27 @@ impl Agent {
         reasoner: Arc<dyn Reasoner>,
         session: SessionId,
     ) -> Self {
-        let persona = build_system_prompt("");
+        Self::with_role(gateway, memory, tools, skills, reasoner, session, "")
+    }
+
+    /// 带角色构造：角色会注入人格 system prompt，用于多 agent / Router / Blackboard 区分职责。
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_role(
+        gateway: Arc<crate::routing::Gateway>,
+        memory: DynMemory,
+        tools: Arc<ToolRegistry>,
+        skills: Arc<SkillBook>,
+        reasoner: Arc<dyn Reasoner>,
+        session: SessionId,
+        role: &str,
+    ) -> Self {
+        let persona = if role.is_empty() {
+            build_system_prompt("")
+        } else {
+            build_system_prompt(&format!(
+                "你的专属角色：{role}。请始终以该角色的专业视角拆解与作答。"
+            ))
+        };
         Agent {
             gateway,
             memory,
@@ -44,6 +66,7 @@ impl Agent {
             skills,
             reasoner,
             persona,
+            role: role.to_string(),
             session,
             steps: Mutex::new(Vec::new()),
         }
@@ -144,5 +167,24 @@ impl Agent {
 
     fn push(&self, s: Step) {
         self.steps.lock().unwrap().push(s);
+    }
+}
+
+#[async_trait::async_trait]
+impl Unit for Agent {
+    fn name(&self) -> &str {
+        if self.role.is_empty() {
+            "agent"
+        } else {
+            &self.role
+        }
+    }
+
+    /// 作为统一 `Unit` 运行：内部仍是 ReAct 循环；结果同时写入共享黑板（key=角色），
+    /// 使它在 Blackboard / Graph 等编排里天然贡献到共享状态。
+    async fn run(&self, ctx: &RunContext, input: &Value) -> GanyuResult<Value> {
+        let out = self.run(input).await?;
+        ctx.board_set(self.name(), out.clone());
+        Ok(out)
     }
 }

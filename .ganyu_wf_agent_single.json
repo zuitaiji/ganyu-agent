@@ -1,0 +1,4 @@
+{
+  "viking://agent/memory/sessions/1a009e7b-bd1d-41c7-8397-24e4639a6e1e": "{\"final\":\"[本地兜底] 收到：你好（未配置联网模型；用 @tool 驱动内置能力，或 --features network 接真模型进入多步深思）\",\"session\":\"1a009e7b-bd1d-41c7-8397-24e4639a6e1e\",\"steps\":[{\"Thought\":\"人格已加载（Pi-EQ，561 字符）\"},{\"Final\":\"[本地兜底] 收到：你好（未配置联网模型；用 @tool 驱动内置能力，或 --features network 接真模型进入多步深思）\"}]}",
+  "viking://agent/memory/sessions/e04a7d8e-9160-4345-9a69-54c2649b6c1e": "{\"final\":\"[本地兜底] 收到：你好（未配置联网模型；用 @tool 驱动内置能力，或 --features network 接真模型进入多步深思）\",\"session\":\"e04a7d8e-9160-4345-9a69-54c2649b6c1e\",\"steps\":[{\"Thought\":\"人格已加载（Pi-EQ，561 字符）\"},{\"Final\":\"[本地兜底] 收到：你好（未配置联网模型；用 @tool 驱动内置能力，或 --features network 接真模型进入多步深思）\"}]}"
+}

@@ -16,6 +16,12 @@ use ganyu_agent::core::llm::{DynBackend, LlmBackend, LocalBackend, Message};
 use ganyu_agent::core::llm::OpenAiBackend;
 use ganyu_agent::core::loop_::{LocalReasoner, Step};
 use ganyu_agent::core::memory::{DynMemory, LocalMemory};
+use ganyu_agent::core::unit::{RunContext, Unit};
+use ganyu_agent::core::workflow::{
+    BlackboardWorkflow, GraphBuilder, KeywordRouter, LocalPlanner, MultiAgentWorkflow,
+    PlanExecuteWorkflow, RouterWorkflow, SingleWorkflow, Workflow,
+};
+use ganyu_agent::core::Agent;
 use ganyu_agent::ext::builtins::register_core_tools;
 use ganyu_agent::ext::skills::{register_core_skills, SkillTool};
 use ganyu_agent::ext::SkillBook;
@@ -27,6 +33,7 @@ use ganyu_agent::routing::Gateway;
 use ganyu_agent::session::SessionId;
 use ganyu_agent::value::Value;
 use ganyu_agent::{GanyuError, GanyuResult};
+use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() -> GanyuResult<()> {
@@ -34,6 +41,7 @@ async fn main() -> GanyuResult<()> {
     let mut session = SessionId::new();
     let mut cmd: Option<String> = None;
     let mut positional: Vec<String> = Vec::new();
+    let mut mode_arg: Option<String> = None;
     let mut k = 1;
     while k < raw.len() {
         if raw[k] == "--session" {
@@ -41,6 +49,13 @@ async fn main() -> GanyuResult<()> {
                 if let Ok(u) = uuid::Uuid::parse_str(s) {
                     session = SessionId(u);
                 }
+            }
+            k += 2;
+            continue;
+        }
+        if raw[k] == "--mode" {
+            if let Some(m) = raw.get(k + 1) {
+                mode_arg = Some(m.clone());
             }
             k += 2;
             continue;
@@ -155,6 +170,40 @@ async fn main() -> GanyuResult<()> {
         "selftest" => {
             selftest().await;
         }
+        "modes" => {
+            println!("支持的 agent 范式（--mode）：");
+            for (m, desc) in [
+                ("single", "单 agent（Unit 直跑）"),
+                ("react", "ReAct 多步推理循环（默认单 agent 内部行为）"),
+                ("plan", "Plan & Execute：先规划再逐步执行"),
+                ("multi", "多 agent 协作：按轮次传递上下文"),
+                ("router", "Router：分类派发到专精 agent/skill"),
+                ("blackboard", "Blackboard：共享黑板 + 合成器"),
+                ("graph", "Graph Workflow：DAG 拓扑执行"),
+            ] {
+                println!("  {m:11} - {desc}");
+            }
+        }
+        "agent" => {
+            let mode = mode_arg.clone().unwrap_or_else(|| "react".to_string());
+            let query = positional.join(" ");
+            if query.trim().is_empty() {
+                eprintln!("用法: cargo run -- agent \"任务\" --mode <single|react|plan|multi|router|blackboard|graph>");
+                std::process::exit(2);
+            }
+            let ctx = RunContext::new(
+                session,
+                memory.clone(),
+                agent.gateway.clone(),
+                tools.clone(),
+                skills.clone(),
+            );
+            let wf = build_workflow(&mode, &ctx, &agent)?;
+            println!("session: {session}");
+            println!("mode: {}", wf.mode());
+            let out = wf.run(&ctx, &Value(query)).await?;
+            println!("\n>> {}", out);
+        }
         _ => {
             use std::io::Read;
             println!("session: {session}");
@@ -185,6 +234,75 @@ fn print_trace(agent: &ganyu_agent::core::Agent) {
             Step::Final(s) => println!("  {}. ✅ {s}", i + 1),
         }
     }
+}
+
+/// 按范式名构造对应 `Workflow`。所有单元复用同一份网关/记忆/工具/技能/会话（Arc 克隆）。
+fn build_workflow(
+    mode: &str,
+    _ctx: &RunContext,
+    base: &Agent,
+) -> GanyuResult<Arc<dyn Workflow>> {
+    // 角色化构造一个 Unit（Agent），共享 base 的全部后端。
+    let mk = |role: &str| -> Arc<dyn Unit> {
+        Arc::new(Agent::with_role(
+            base.gateway.clone(),
+            base.memory.clone(),
+            base.tools.clone(),
+            base.skills.clone(),
+            Arc::new(LocalReasoner),
+            base.session,
+            role,
+        ))
+    };
+    let wf: Arc<dyn Workflow> = match mode {
+        "single" | "react" => Arc::new(SingleWorkflow::new(mk(""))),
+        "plan" => Arc::new(PlanExecuteWorkflow::new(Arc::new(LocalPlanner), mk(""))),
+        "multi" => Arc::new(MultiAgentWorkflow::new(
+            vec![mk("规划者"), mk("执行者"), mk("复核者")],
+            2,
+        )),
+        "router" => {
+            let mut routes: HashMap<String, Arc<dyn Unit>> = HashMap::new();
+            routes.insert("summarize".into(), mk("Summarizer"));
+            routes.insert("troubleshoot".into(), mk("Troubleshooter"));
+            routes.insert("kb".into(), mk("KB"));
+            let router = Arc::new(KeywordRouter::new(vec![
+                ("总结", "summarize"),
+                ("摘要", "summarize"),
+                ("summarize", "summarize"),
+                ("排查", "troubleshoot"),
+                ("故障", "troubleshoot"),
+                ("报错", "troubleshoot"),
+                ("troubleshoot", "troubleshoot"),
+                ("知识库", "kb"),
+                ("kb", "kb"),
+                ("查一下", "kb"),
+            ]));
+            Arc::new(RouterWorkflow::new(router, routes, mk("")))
+        }
+        "blackboard" => Arc::new(BlackboardWorkflow::new(
+            vec![mk("研究员"), mk("写作者")],
+            mk("合成者"),
+            1,
+        )),
+        "graph" => {
+            let w = GraphBuilder::default()
+                .node("research", mk("研究员"))
+                .edge("research", "draft")
+                .node("draft", mk("写作者"))
+                .edge("draft", "review")
+                .node("review", mk("复核者"))
+                .end("review")
+                .build()?;
+            Arc::new(w)
+        }
+        other => {
+            return Err(GanyuError::Workflow(format!(
+                "未知范式：{other}（用 `modes` 查看支持列表）"
+            )))
+        }
+    };
+    Ok(wf)
 }
 
 async fn selftest() {

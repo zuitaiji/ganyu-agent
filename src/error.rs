@@ -36,6 +36,9 @@ pub enum GanyuError {
 
     #[error("http: {0}")]
     Http(String),
+
+    #[error("workflow: {0}")]
+    Workflow(String),
 }
 
 pub type GanyuResult<T> = Result<T, GanyuError>;

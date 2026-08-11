@@ -1,0 +1,4 @@
+{
+  "viking://agent/memory/sessions/318043ad-2ab6-44f2-b153-2c72c18c9005": "{\"final\":\"[本地兜底] 收到：@skill:summarize 原始任务：总结需求文档然后排查潜在故障\\n执行计划（2 步）：\\n- 子任务「总结需求文档（未配置联网模型；用 @tool 驱动内置能力，或 --features network 接真模型进入多步深思）\",\"session\":\"318043ad-2ab6-44f2-b153-2c72c18c9005\",\"steps\":[{\"Thought\":\"人格已加载（Pi-EQ，560 字符）\"},{\"Final\":\"[本地兜底] 收到：@skill:summarize 原始任务：总结需求文档然后排查潜在故障\\n执行计划（2 步）：\\n- 子任务「总结需求文档（未配置联网模型；用 @tool 驱动内置能力，或 --features network 接真模型进入多步深思）\"}]}",
+  "viking://agent/memory/sessions/6b01b1ae-8b7f-4d81-94c2-f75c229ca0cb": "{\"final\":\"[本地兜底] 收到：@skill:summarize 原始任务：总结需求文档然后排查潜在故障\\n执行计划（2 步）：\\n- 子任务「总结需求文档（未配置联网模型；用 @tool 驱动内置能力，或 --features network 接真模型进入多步深思）\",\"session\":\"6b01b1ae-8b7f-4d81-94c2-f75c229ca0cb\",\"steps\":[{\"Thought\":\"人格已加载（Pi-EQ，560 字符）\"},{\"Final\":\"[本地兜底] 收到：@skill:summarize 原始任务：总结需求文档然后排查潜在故障\\n执行计划（2 步）：\\n- 子任务「总结需求文档（未配置联网模型；用 @tool 驱动内置能力，或 --features network 接真模型进入多步深思）\"}]}"
+}
