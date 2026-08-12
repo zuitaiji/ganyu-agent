@@ -1,4 +1,16 @@
+# 构建产物（所有 target 目录，含备用构建目录）
 /target
+/target-*/
+/target8/
+/target-secure/
+*.tmp
+
+# 运行时数据（不提交）
 .ganyu_memory.json
 *.ganyu_*.json
 .ganyu_workspace/
+
+# 临时/诊断文件
+_unlock.txt
+_ps_check.txt
+_kill_flag.txt

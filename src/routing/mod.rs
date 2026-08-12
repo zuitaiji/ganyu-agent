@@ -206,6 +206,7 @@ impl Gateway {
 #[cfg(feature = "network")]
 #[derive(serde::Deserialize)]
 struct BackendSpec {
+    #[allow(dead_code)]
     name: String,
     base_url: String,
     api_key: String,
