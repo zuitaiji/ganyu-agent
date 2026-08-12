@@ -32,6 +32,7 @@ cargo --features shell ─┐
 | `GANYU_AUDIT` | 关 | `1`/`stderr`/文件路径 → JSON Lines 审计 |
 | `OV_BASE` | 无 | OpenViking 记忆服务（network） |
 | `OPENAI_API_BASE` / `OPENAI_API_KEY` | 无 | OpenAI 兼容后端（network） |
+| `OPENAI_MODEL` | `gpt-4o-mini` | 模型 id（OpenAI 兼容端点；推理模型自动兼容 `reasoning_content`） |
 
 ## 3. 场景配置模板
 

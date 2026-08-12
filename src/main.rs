@@ -90,8 +90,10 @@ async fn main() -> GanyuResult<()> {
         std::env::var("OPENAI_API_BASE"),
         std::env::var("OPENAI_API_KEY"),
     ) {
+        // 模型名可用 OPENAI_MODEL 覆盖（默认 gpt-4o-mini；OpenAI 兼容端点均可）。
+        let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
         #[cfg(feature = "network")]
-        gateway.register(Arc::new(OpenAiBackend::new(&base, &key, "gpt-4o-mini")) as DynBackend);
+        gateway.register(Arc::new(OpenAiBackend::new(&base, &key, &model)) as DynBackend);
         #[cfg(not(feature = "network"))]
         let _ = (base, key);
     }

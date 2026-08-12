@@ -153,10 +153,15 @@ impl LlmBackend for OpenAiBackend {
             .json()
             .await
             .map_err(|e| GanyuError::Http(e.to_string()))?;
-        let content = json["choices"][0]["message"]["content"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
-        Ok(Value(content))
+        // 兼容推理模型（如 DeepSeek/Agnes 类）：最终回答可能落在 `reasoning_content`，
+        // 而 `content` 为空。优先 content，空则回退 reasoning_content（避免返回空串）。
+        let msg = &json["choices"][0]["message"];
+        let content = msg["content"].as_str().unwrap_or("").to_string();
+        let final_text = if content.trim().is_empty() {
+            msg["reasoning_content"].as_str().unwrap_or("").to_string()
+        } else {
+            content
+        };
+        Ok(Value(final_text))
     }
 }
