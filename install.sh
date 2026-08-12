@@ -50,7 +50,7 @@ detect_asset() {
   case "$os" in
     Linux*)  echo "ganyu-agent-linux-$([ "$arch" = "aarch64" ] && echo arm64 || echo x86_64).tar.gz" ;;
     Darwin*) echo "ganyu-agent-macos-$([ "$arch" = "arm64" ] && echo arm64 || echo x86_64).tar.gz" ;;
-    MINGW*|MSYS*|CYGWIN*) echo "ganyu-agent-windows-x86_64.zip" ;;
+    MINGW*|MSYS*|CYGWIN*) echo "ganyu-agent-windows-x86_64.tar.gz" ;;
     *) echo "不支持的平台: $os/$arch" >&2; exit 1 ;;
   esac
 }

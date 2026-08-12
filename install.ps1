@@ -32,9 +32,9 @@ $binPath = Join-Path $binDir "ganyu-agent.exe"
 function Get-AssetName {
   $arch = $env:PROCESSOR_ARCHITECTURE
   if ($arch -eq "ARM64") {
-    return "ganyu-agent-windows-arm64.zip"
+    return "ganyu-agent-windows-arm64.tar.gz"
   }
-  return "ganyu-agent-windows-x86_64.zip"
+  return "ganyu-agent-windows-x86_64.tar.gz"
 }
 
 # ---- 路径一：免编译下载（默认） ----------------------------------------------
@@ -57,7 +57,9 @@ if (-not $Features) {
   $zipPath = Join-Path ([IO.Path]::GetTempPath()) $asset
   Write-Host "[install] 下载 $downloadUrl"
   Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
-  Expand-Archive -Path $zipPath -DestinationPath $binDir -Force
+  # Windows 10 1803+ 自带 bsdtar；tar.gz 统一解压（比 Expand-Archive 更稳）。
+  & tar -xzf $zipPath -C $binDir
+  if ($LASTEXITCODE -ne 0) { Write-Error "解压失败：tar -xzf $zipPath -C $binDir" }
   Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 
   # 资产内可能直接是 exe（zip 内为 ganyu-agent.exe）；兜底处理

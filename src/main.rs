@@ -423,9 +423,9 @@ async fn main() -> GanyuResult<()> {
                 let asset = match os {
                     "windows" => {
                         if std::env::var("PROCESSOR_ARCHITECTURE").as_deref() == Ok("ARM64") {
-                            "ganyu-agent-windows-arm64.zip".to_string()
+                            "ganyu-agent-windows-arm64.tar.gz".to_string()
                         } else {
-                            "ganyu-agent-windows-x86_64.zip".to_string()
+                            "ganyu-agent-windows-x86_64.tar.gz".to_string()
                         }
                     }
                     "linux" => format!(
@@ -470,38 +470,15 @@ async fn main() -> GanyuResult<()> {
                 std::fs::write(&tmp, &bytes)?;
                 println!("[update] 下载完成（{} bytes），解压替换…", bytes.len());
 
-                // 解压：zip（Windows）用 zip crate？—— 简化：Windows 下调用 Expand-Archive 太重；
-                // 这里用纯 Rust 解压 zip 需要加依赖，改为：Windows 用 tar 解 zip 不可行。
-                // 方案：release 资产对 Windows 改发 .zip；解压用 `powershell Expand-Archive`。
-                // 为免引入 zip crate，Linux/macOS 用 tar 命令，Windows 用 Expand-Archive。
-                #[cfg(target_os = "windows")]
-                {
-                    use std::process::Command;
-                    let ps_cmd = format!(
-                        "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                        tmp.display().to_string().replace('\\', "/"),
-                        bin_dir.replace('\\', "/")
-                    );
-                    let status = Command::new("powershell")
-                        .args(["-NoProfile", "-Command", ps_cmd.as_str()])
-                        .status()
-                        .map_err(|e| GanyuError::Io(e))?;
-                    if !status.success() {
-                        eprintln!("解压失败（Expand-Archive）。请手动解压 {tmp:?} 到 {bin_dir}");
-                        std::process::exit(1);
-                    }
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    use std::process::Command;
-                    let status = Command::new("tar")
-                        .args(["-xzf", tmp.to_str().unwrap(), "-C", &bin_dir])
-                        .status()
-                        .map_err(|e| GanyuError::Io(e))?;
-                    if !status.success() {
-                        eprintln!("解压失败。请手动解压 {tmp:?} 到 {bin_dir}");
-                        std::process::exit(1);
-                    }
+                // 解压：统一 tar.gz（Windows 10 1803+ 自带 bsdtar；Linux/macOS 自带 tar）。
+                use std::process::Command;
+                let status = Command::new("tar")
+                    .args(["-xzf", tmp.to_str().unwrap(), "-C", &bin_dir])
+                    .status()
+                    .map_err(|e| GanyuError::Io(e))?;
+                if !status.success() {
+                    eprintln!("解压失败。请手动解压 {tmp:?} 到 {bin_dir}");
+                    std::process::exit(1);
                 }
                 let _ = std::fs::remove_file(&tmp);
 

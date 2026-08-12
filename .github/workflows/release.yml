@@ -18,14 +18,11 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact: ganyu-agent-windows-x86_64.zip
-            archive: powershell Compress-Archive -Path target/release/ganyu-agent.exe -DestinationPath "$env:RUNNER_TEMP/ganyu-agent-windows-x86_64.zip" -Force
+            artifact: ganyu-agent-windows-x86_64.tar.gz
           - os: ubuntu-latest
             artifact: ganyu-agent-linux-x86_64.tar.gz
-            archive: tar -czf "$RUNNER_TEMP/ganyu-agent-linux-x86_64.tar.gz" -C target/release ganyu-agent
           - os: macos-latest
             artifact: ganyu-agent-macos-arm64.tar.gz
-            archive: tar -czf "$RUNNER_TEMP/ganyu-agent-macos-arm64.tar.gz" -C target/release ganyu-agent
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +43,7 @@ jobs:
 
       - name: Archive
         shell: bash
-        run: ${{ matrix.archive }}
+        run: tar -czf "$RUNNER_TEMP/${{ matrix.artifact }}" -C target/release ganyu-agent
 
       - name: Upload asset
         uses: actions/upload-artifact@v4
