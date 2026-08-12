@@ -1,101 +1,77 @@
 # ganyu-agent 架构概览
 
-> 面向架构读者：分层、数据流、模块职责与扩展点。
-> 决策依据见 ADR-001（统一架构）/ ADR-002（多范式）/ ADR-005/006（安全与工程化）。
+> 以对标范式组织：**Pi 式极简 harness** × **OpenClaw 式执行网关** × **Hermes 式防护与闭环** × **Prime 式诚实边界**。
+> 决策记录见 ADR-001~007。
 
-## 1. 分层总览
+## 1. 定位：四种范式如何落到本项目
 
-```
-┌────────────────────────────── 接入层 ──────────────────────────────┐
-│ CLI（run / chat / agent / sag / tools / selftest）· stdin 管道      │
-└────────────────────────────────────────────────────────────────────┘
-                          │
-┌──────────────────────────▼──────────────────────────────────────────┐
-│ 编排面：Agent（ReAct 推理循环，可插拔 Reasoner）· Workflow（7 范式） │
-│   Unit 原子（name + run(ctx,input)）· RunContext（共享上下文/黑板）  │
-├────────────────────────────────────────────────────────────────────┤
-│ 能力面：ToolRegistry（内置/插件/技能）· SkillBook（可生长技能）      │
-├────────────────────────────────────────────────────────────────────┤
-│ 记忆面：Memory（LocalMemory / OpenVikingMemory，UUID 会话轨迹）     │
-├────────────────────────────────────────────────────────────────────┤
-│ 模型面：Gateway（多后端级联 + 熔断 + lkgp + 缓存 + 限速 + 审计）    │
-│          LlmBackend（LocalBackend 兜底 / OpenAiBackend 可选）       │
-├────────────────────────────────────────────────────────────────────┤
-│ 知识面：SAG 管道（意图→上下文→生成→校验→自进化）· MDL 语义校验      │
-├────────────────────────────────────────────────────────────────────┤
-│ 横切：heal（重试/熔断/限速）· security（沙箱/SSRF/净化）·           │
-│        sandbox（Landlock）· config（配置）· cache（LRU+TTL）·        │
-│        observe（审计 JSON Lines）                                   │
-└────────────────────────────────────────────────────────────────────┘
-```
+| 对标范式 | 借鉴点 | 本项目落地 |
+|----------|--------|-----------|
+| **Pi**（极简 harness） | 原语而非功能；技能=文件可版本化；多运行模式 | `Unit`/`tool!` 宏（一行注册原语）；`SkillBook` 技能=代码结构；CLI 多模式（run/agent/chat/sag） |
+| **OpenClaw**（执行网关） | 多后端网关 + 热路径缓存复用 + 崩溃可恢复存储 | `Gateway` 级联/lkgp/熔断；`cache` LRU+TTL（只读工具+LLM 响应）；memory 原子写（tmp+rename） |
+| **Hermes**（闭环学习 + 防护） | 自进化技能 + 分层记忆 + 多道防线 | `SkillBook` 成功固化/失败沉淀（自进化）；会话轨迹+检索+案例（记忆分层）；12 层安全防线（对应 Hermes 8 层） |
+| **Prime**（诚实边界） | 会话树/续接；明确「进程隔离≠安全沙箱」 | 会话 UUID 跨重启续接（`--session`）；文档明示沙箱根≠容器隔离，强隔离用 Docker/gVisor |
 
-## 2. 一次请求的旅程（ReAct）
+## 2. 分层
 
 ```
-用户消息 ──► Agent.run(msg)
-              │ 1. 技能路由：自然语言意图 → SkillBook.match_intent（可选）
-              │ 2. Reasoner.decide(msg, known)：
-              │      · LocalReasoner：解析 @tool 脚本 / JSON 函数调用
-              │      · （未来 LlmReasoner：模型产出动作）
-              │ 3. 命中工具 → tools.call(name, args)
-              │      · 只读工具：重试自愈 + 可选 LRU 缓存
-              │      · 副作用工具：不缓存、不盲目重试
-              │      · 安全拦截：沙箱/SSRF/shell 开关在此层执行
-              │ 4. Observation 回流 → 继续循环（MAX_STEPS=8）
-              │ 5. Final → 作答
-              └─► memory.commit(session, trace)   // UUID 轨迹落盘（跨重启续接）
+接入层 CLI（run/chat/agent/sag/tools/selftest）
+   │
+编排层 Agent(ReAct) · Workflow(7 范式) · Unit + RunContext
+   │
+能力层 ToolRegistry（内置 tool! / 插件 CommandTool / 技能 SkillBook）
+   │
+记忆层 Memory（LocalMemory / OpenVikingMemory，会话 UUID 轨迹）
+   │
+模型层 Gateway（级联+熔断+lkgp+缓存+限速+审计）→ LlmBackend
+   │
+知识层 SAG 管道 + MDL 语义校验
+   │
+横切层 heal（自愈）· security（执行面）· sandbox（进程级）· config/cache/observe（工程面）
 ```
 
-## 3. 核心抽象（trait）
+## 3. 一次请求的旅程（ReAct）
 
-| 抽象 | 职责 | 默认实现 | 扩展点 |
-|------|------|----------|--------|
-| `Memory` | 命名空间 URI → 值；会话轨迹提交/续接 | `LocalMemory`（JSON 落盘，可加密） | 实现 trait 接任意存储 |
+```
+消息 → 技能路由(match_intent) → Reasoner.decide
+     → tools.call（只读:重试+缓存 / 副作用:不缓存不重试 / 安全:沙箱·SSRF·shell 开关在此执行）
+     → Observation 回流 → 循环(MAX_STEPS=8) → Final
+     → memory.commit(session, trace)  // UUID 轨迹落盘，跨重启续接（Prime 会话树）
+```
+
+## 4. 核心抽象
+
+| 抽象 | 职责 | 默认 | 扩展点 |
+|------|------|------|--------|
+| `Memory` | URI→值；会话轨迹 | `LocalMemory`（可加密） | 实现 trait |
 | `LlmBackend` | 对话补全 | `LocalBackend`（离线兜底） | `OpenAiBackend`（network） |
-| `Tool` | 原子能力 | 内置 10+ 工具 | `tool!` 宏 / `CommandTool` 插件 |
-| `Reasoner` | 单步决策 | `LocalReasoner` | 接模型后替换 |
-| `Unit` | 可编排原子 | `Agent` | 任意 `Unit` |
-| `Workflow` | 对 `Unit` 的协调策略 | 7 种范式 | 新范式=实现 trait |
-| `Gateway` | 多后端路由 | 级联+熔断+lkgp | `register` / `hot_reload` |
+| `Tool` | 原子能力 | 内置 10+ | `tool!` / 插件 |
+| `Reasoner` | 单步决策 | `LocalReasoner` | 接模型替换 |
+| `Unit` | 可编排原子 | `Agent` | 任意 Unit |
+| `Workflow` | 协调策略 | 7 范式 | 新范式实现 trait |
+| `Gateway` | 后端路由 | 级联+熔断+lkgp | register/hot_reload |
 
-## 4. 模块职责表（src/）
+## 5. 模块职责速查
 
-| 模块 | 职责 | 关键约束 |
-|------|------|----------|
-| `core/llm.rs` | 模型后端抽象与 OpenAI 兼容实现 | network 特性；错误分流（5xx 可重试/4xx 致命） |
-| `core/memory.rs` | 记忆：Local/OpenViking、会话轨迹、加密 | crypto 特性；异步 IO；原子写 |
-| `core/agent.rs` | 编排：ReAct 循环、角色、会话续接 | MAX_STEPS=8；失败作 Observation 回流 |
-| `core/loop_.rs` | 推理循环与决策 | `@tool` 脚本 + JSON 函数调用（M6） |
-| `core/unit.rs` / `workflow/` | Unit 抽象与 7 范式 | 构造即校验（Graph 环检测） |
-| `ext/` | 工具注册 / 插件发现 / 技能 | 插件默认关 + 白名单；副作用标注 |
-| `knowledge/mdl.rs` | MDL 语义校验 + SQL 注入检测 | 表/列存在性 + 危险关键字 |
-| `knowledge/sag.rs` | SAG 五步管道 | 模板降级自愈；自进化写回 |
-| `heal/` | 重试 / 熔断 / 级联 / 限速 | 指数退避；令牌桶 |
-| `routing/` | 网关：级联 + lkgp + 缓存 + 审计 | 输出净化出口；热更新 |
-| `security.rs` | 文件沙箱 / SSRF / shell 开关 / 净化 | **失败闭环默认拒绝** |
-| `sandbox.rs` | Landlock 进程沙箱（Linux） | 目标特定依赖，仅 Linux |
-| `config.rs` | GANYU_* 集中配置 + 基线自检 | ENV_DOCS 单一来源 |
-| `cache.rs` | LRU+TTL 缓存 | 副作用工具永不缓存 |
-| `observe.rs` | JSON Lines 审计 | GANYU_AUDIT 开关 |
-| `persona/` | Pi-EQ 人格 SOUL | system prompt 注入 |
-
-## 5. 关键设计决策（ADR 索引）
-
-| 决策 | 记录 |
+| 模块 | 职责 |
 |------|------|
-| 会话 UUID + 统一字符串值 + 抽象层 | ADR-001 |
-| Unit/RunContext/Workflow 三层抽象（7 范式） | ADR-002 |
-| 缺陷/漏洞全量审计（5C/3H/6M/2L + PoC） | ADR-003 |
-| 2026 开源 agent 对标（防护边界） | ADR-004 / ADR-006 |
-| P0–P3 修复落地（失败闭环） | ADR-005 |
-| 工程化：配置/缓存/审计/目录 | ADR-006 |
-| 安装与分发（脚本 + cargo + 供应链安全） | ADR-007 |
+| `core/llm.rs` | 后端抽象；5xx 可重试/4xx 致命分流 |
+| `core/memory.rs` | 记忆；异步 IO；加密（crypto）；原子写 |
+| `core/agent.rs` | ReAct 编排；失败作 Observation 回流 |
+| `core/loop_.rs` | 决策解析（@脚本 + JSON 函数调用） |
+| `core/unit.rs` / `workflow/` | Unit + 7 范式（Graph 构造即校验环） |
+| `ext/` | 工具/插件/技能；副作用标注 |
+| `knowledge/` | MDL 校验 + SQL 注入检测；SAG 管道 |
+| `heal/` | 重试/熔断/级联/限速 |
+| `routing/` | 网关 + 缓存 + 审计 + 输出净化 |
+| `security.rs` | 文件沙箱/SSRF/shell 开关/净化（失败闭环） |
+| `sandbox.rs` | Landlock（Linux-only） |
+| `config.rs` | 配置 + 基线自检 |
+| `cache.rs` / `observe.rs` | LRU+TTL 缓存 / JSON Lines 审计 |
 
-## 6. 安全边界速览
+## 6. 扩展点（对标 Pi 原语哲学）
 
-- **执行面**（`security.rs`/`sandbox.rs`）：文件沙箱、SSRF、shell 双层开关、Landlock（Linux）。
-- **数据面**：记忆加密（crypto）、API key 清零（secret）、输出净化。
-- **治理面**：启动基线自检（`config::security_baseline`）、审计留痕（`observe`）、漏洞报告（SECURITY.md §5）。
-- **部署面**：容器隔离（Docker/gVisor）为强隔离建议，见 SECURITY.md §4。
-
-> 完整防线表、env 清单见 **[SECURITY.md](../SECURITY.md)**。
+1. 加工具：`reg.register(crate::tool!(name, "描述", closure))`
+2. 加插件（免重编译）：`plugins/*.json` + `vetted:true` + 白名单
+3. 加技能：`SkillBook::register_skill(Skill{steps})` → 自动注册 `skill:<name>` 并支持意图路由
+4. 接模型/记忆：实现 `LlmBackend`/`Memory`，注册进 `Gateway`/`Agent`
