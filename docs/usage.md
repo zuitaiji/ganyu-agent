@@ -40,6 +40,7 @@ model = "agnes-2.5-flash"                      # 模型 id
 | `skill <名> <参数>` | 直接调用技能（summarize/troubleshoot/kb_query） |
 | `selftest` / `tools` / `modes` | 自检 / 列工具 / 列范式 |
 | `doctor` | 环境诊断：编译特性 / 配置文件 / 模型配置 / 网关后端 / 能力面 |
+| `models` | **查询网关可用模型列表**（`GET /v1/models`，基于已配置端点） |
 
 ## 示例
 
