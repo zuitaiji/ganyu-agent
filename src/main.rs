@@ -531,7 +531,8 @@ async fn main() -> GanyuResult<()> {
                     std::process::exit(1);
                 }
                 ganyu_agent::config::write_model_config(&base, &key, new_model)?;
-                println!("✅ 当前模型已切换: {cur_model.unwrap_or_default()} → {new_model}");
+                let prev = cur_model.unwrap_or_default();
+                println!("✅ 当前模型已切换: {prev} → {new_model}");
             } else {
                 let masked = key
                     .as_deref()
