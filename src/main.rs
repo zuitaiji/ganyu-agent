@@ -317,6 +317,11 @@ async fn main() -> GanyuResult<()> {
                 // 交互式 REPL（对标 OpenClaw / Hermes 的对话体验）：
                 // 多轮对话共享同一会话，记忆/上下文跨轮延续；输入 /quit 或 Ctrl+C 退出。
                 println!("ganyu-agent 交互对话已启动（同一会话延续上下文；输入 /quit 或 Ctrl+C 退出）");
+                if std::env::var("OPENAI_API_BASE").is_err() || std::env::var("OPENAI_API_KEY").is_err() {
+                    println!("⚠️ 未配置模型（当前为离线本地兜底）。编辑 ~/.ganyu/config.toml 的 [model] 段，或运行 ganyu-agent doctor 查看指引。");
+                } else {
+                    println!("💡 已连接模型：{}", std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "默认".into()));
+                }
                 let mut line = String::new();
                 loop {
                     print!("ganyu> ");
