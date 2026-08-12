@@ -14,7 +14,7 @@ use std::sync::Arc;
 use ganyu_agent::core::llm::{DynBackend, LlmBackend, LocalBackend, Message};
 #[cfg(feature = "network")]
 use ganyu_agent::core::llm::OpenAiBackend;
-use ganyu_agent::core::loop_::{LocalReasoner, Step};
+use ganyu_agent::core::loop_::{LlmReasoner, LocalReasoner, Step};
 use ganyu_agent::core::memory::{DynMemory, LocalMemory};
 use ganyu_agent::core::unit::{RunContext, Unit};
 use ganyu_agent::core::workflow::{
@@ -129,9 +129,23 @@ async fn main() -> GanyuResult<()> {
         )));
     }
 
+    // 推理器：配置了 OpenAI 兼容模型（network 特性）→ 用 LlmReasoner 接真模型；否则离线 LocalReasoner。
+    let gateway_arc = Arc::new(gateway);
+    #[cfg(feature = "network")]
+    let reasoner: Arc<dyn ganyu_agent::core::loop_::Reasoner> = {
+        let has_model = std::env::var("OPENAI_API_BASE").is_ok()
+            && std::env::var("OPENAI_API_KEY").is_ok();
+        if has_model {
+            Arc::new(LlmReasoner::new(gateway_arc.clone()))
+        } else {
+            Arc::new(LocalReasoner)
+        }
+    };
+    #[cfg(not(feature = "network"))]
     let reasoner: Arc<dyn ganyu_agent::core::loop_::Reasoner> = Arc::new(LocalReasoner);
+
     let agent = ganyu_agent::core::Agent::new(
-        Arc::new(gateway),
+        gateway_arc,
         memory.clone(),
         tools.clone(),
         skills.clone(),

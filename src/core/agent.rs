@@ -99,7 +99,7 @@ impl Agent {
         let mut final_answer = Value::default();
 
         for _ in 0..MAX_STEPS {
-            let decision = self.reasoner.decide(&msg, &known)?;
+            let decision = self.reasoner.decide(&msg, &known).await?;
             match decision {
                 Decision::Final(text) => {
                     self.push(Step::Final(text.clone()));
