@@ -12,6 +12,8 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 thiserror = "1"
 regex = "1"
+# 配置文件（~/.ganyu/config.toml）解析——纯 Rust 轻量依赖，所有构建可用。
+toml = "0.8"
 
 # 联网后端（真实 LLM / OpenViking）默认关闭，避免引入 TLS/C 编译依赖。
 # 开启：cargo run --features network
@@ -19,7 +21,7 @@ regex = "1"
 version = "0.12"
 optional = true
 default-features = false
-features = ["json", "rustls-tls"]
+features = ["json", "rustls-tls", "system-proxy"]
 
 # 记忆加密（H1）/ 密钥擦除（L1）—— 默认关闭，生产用 --features crypto,secret
 [dependencies.aes-gcm]

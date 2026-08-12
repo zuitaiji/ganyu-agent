@@ -74,6 +74,8 @@ async fn main() -> GanyuResult<()> {
 
     // 工程化配置面：集中读取 GANYU_*，据此启用缓存/限速/审计。
     let cfg = ganyu_agent::config::GanyuConfig::from_env();
+    // 一站式：从 ~/.ganyu/config.toml 加载模型配置（已设置的环境变量优先）。
+    ganyu_agent::config::load_model_config();
     let audit = Arc::new(ganyu_agent::observe::AuditLog::from_config());
 
     let mut gateway = Gateway::new();
@@ -243,19 +245,51 @@ async fn main() -> GanyuResult<()> {
             println!("\n>> {}", out);
         }
         _ => {
-            use std::io::Read;
+            use std::io::{IsTerminal, Read, Write};
             println!("session: {session}");
             let resumed = agent.resume().await;
             if resumed {
-                println!("[已续接会话 {}]", session);
+                println!("[已续接会话 {session}]");
             }
-            let mut buf = String::new();
-            std::io::stdin().read_to_string(&mut buf).ok();
-            let msg = buf.trim().to_string();
-            if msg.is_empty() {
-                println!("{}", agent.run(&Value("你好".into())).await?);
+            if std::io::stdin().is_terminal() {
+                // 交互式 REPL（对标 OpenClaw / Hermes 的对话体验）：
+                // 多轮对话共享同一会话，记忆/上下文跨轮延续；输入 /quit 或 Ctrl+C 退出。
+                println!("ganyu-agent 交互对话已启动（同一会话延续上下文；输入 /quit 或 Ctrl+C 退出）");
+                let mut line = String::new();
+                loop {
+                    print!("ganyu> ");
+                    std::io::stdout().flush().ok();
+                    line.clear();
+                    let n = std::io::stdin().read_line(&mut line).unwrap_or(0);
+                    if n == 0 {
+                        // EOF（Ctrl+Z / Ctrl+C）退出
+                        println!();
+                        break;
+                    }
+                    let msg = line.trim().to_string();
+                    if msg.is_empty() {
+                        continue;
+                    }
+                    if msg == "/quit" || msg == "/exit" || msg == "/q" {
+                        break;
+                    }
+                    match agent.run(&Value(msg)).await {
+                        Ok(out) => println!("\n>> {out}\n"),
+                        Err(e) => eprintln!("error: {e}"),
+                    }
+                }
+                println!("再见。");
             } else {
-                println!("{}", agent.run(&Value(msg)).await?);
+                // 管道/单次：读全部内容跑一次（向后兼容：echo "...| ganyu-agent chat"）。
+                let mut buf = String::new();
+                std::io::stdin().read_to_string(&mut buf).ok();
+                let msg = buf.trim().to_string();
+                let out = if msg.is_empty() {
+                    agent.run(&Value("你好".into())).await?
+                } else {
+                    agent.run(&Value(msg)).await?
+                };
+                println!("{out}");
             }
         }
     }

@@ -79,18 +79,29 @@ impl Gateway {
         self.backends.lock().unwrap().push(backend);
     }
 
-    /// lkgp：把上次成功的后端排到最前。
+    /// lkgp：把上次成功的后端排到最前；本地兜底（local）永远排最后（真模型优先）。
     fn ordered_names(&self) -> Vec<String> {
         let backends = self.backends.lock().unwrap();
-        let mut names: Vec<String> = backends.iter().map(|b| b.name().to_string()).collect();
-        drop(backends);
-        if let Some(lg) = self.last_good.lock().unwrap().clone() {
-            if let Some(pos) = names.iter().position(|n| *n == lg) {
-                let n = names.remove(pos);
-                names.insert(0, n);
+        let mut remote: Vec<String> = Vec::new();
+        let mut local: Vec<String> = Vec::new();
+        for b in backends.iter() {
+            if b.name() == "local" {
+                local.push(b.name().to_string());
+            } else {
+                remote.push(b.name().to_string());
             }
         }
-        names
+        drop(backends);
+        if let Some(lg) = self.last_good.lock().unwrap().clone() {
+            if lg != "local" {
+                if let Some(pos) = remote.iter().position(|n| *n == lg) {
+                    let n = remote.remove(pos);
+                    remote.insert(0, n);
+                }
+            }
+        }
+        remote.extend(local);
+        remote
     }
 
     /// 经网关完成一次补全：级联 + 熔断 + lkgp + 限速 + 缓存 + 输出净化，全失败则自愈失败。

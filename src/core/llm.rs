@@ -30,7 +30,9 @@ fn make_key(s: &str) -> ApiKey {
 }
 
 /// 对话角色（Rust `enum` 表达类型安全，而非裸字符串）。
+/// `rename_all = "lowercase"`：序列化为 OpenAI 兼容的小写 `system`/`user`/`assistant`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Role {
     System,
     User,
@@ -105,8 +107,10 @@ pub struct OpenAiBackend {
 #[cfg(feature = "network")]
 impl OpenAiBackend {
     pub fn new(base_url: &str, api_key: &str, model: &str) -> Self {
+        // system-proxy 特性：自动读取 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY 环境代理
+        // （对齐 OpenClaw/Hermes 的代理友好；访问 OpenAI 兼容网关常需本地代理）。
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(60))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         OpenAiBackend {

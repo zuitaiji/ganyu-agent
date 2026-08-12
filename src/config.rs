@@ -24,7 +24,64 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
     ("GANYU_AUDIT", "审计日志：1=stderr，或文件路径（默认 0=关）"),
     ("OV_BASE", "OpenViking 记忆服务地址（network 特性下生效）"),
     ("OPENAI_API_BASE / OPENAI_API_KEY", "OpenAI 兼容后端（network 特性下生效）"),
+    ("OPENAI_MODEL", "模型 id（默认 gpt-4o-mini；推理模型自动兼容 reasoning_content）"),
+    ("GANYU_CONFIG", "配置文件路径（默认 ~/.ganyu/config.toml）"),
 ];
+
+/// 从配置文件加载模型配置（对标 OpenClaw `config.yaml` / Hermes 配置文件），
+/// 实现「一站式」：写一次 `~/.ganyu/config.toml`，之后直接 `ganyu-agent chat` 即可对话。
+///
+/// 规则：
+/// - 路径优先级：`$GANYU_CONFIG` > `~/.ganyu/config.toml` > `./ganyu.toml`；
+/// - **已设置的环境变量优先于文件**（env 覆盖文件，便于 CI/容器注入）；
+/// - 文件格式（toml）：
+///   ```toml
+///   [model]
+///   base_url = "https://apihub.agnes-ai.com/v1"
+///   api_key = "sk-..."
+///   model = "agnes-2.5-flash"
+///   ```
+pub fn load_model_config() {
+    let path = std::env::var("GANYU_CONFIG").ok().or_else(|| {
+        std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .ok()
+            .map(|h| format!("{h}/.ganyu/config.toml"))
+            .or_else(|| Some("ganyu.toml".to_string()))
+    });
+    let Some(path) = path else { return };
+    let Ok(text) = std::fs::read_to_string(&path) else { return };
+
+    #[derive(serde::Deserialize, Default)]
+    struct FileCfg {
+        #[serde(default)]
+        model: Option<ModelCfg>,
+    }
+    #[derive(serde::Deserialize)]
+    struct ModelCfg {
+        base_url: Option<String>,
+        api_key: Option<String>,
+        model: Option<String>,
+    }
+    let Ok(parsed) = toml::from_str::<FileCfg>(&text) else { return };
+    let Some(m) = parsed.model else { return };
+
+    if std::env::var("OPENAI_API_BASE").is_err() {
+        if let Some(b) = m.base_url {
+            std::env::set_var("OPENAI_API_BASE", b);
+        }
+    }
+    if std::env::var("OPENAI_API_KEY").is_err() {
+        if let Some(k) = m.api_key {
+            std::env::set_var("OPENAI_API_KEY", k);
+        }
+    }
+    if std::env::var("OPENAI_MODEL").is_err() {
+        if let Some(md) = m.model {
+            std::env::set_var("OPENAI_MODEL", md);
+        }
+    }
+}
 
 /// 配置快照（启动时读取一次）。
 #[derive(Debug, Clone)]

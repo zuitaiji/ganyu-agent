@@ -14,3 +14,5 @@
 _unlock.txt
 _ps_check.txt
 _kill_flag.txt
+_u*.txt
+_k*.txt
