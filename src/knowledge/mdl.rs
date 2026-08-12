@@ -78,7 +78,45 @@ impl Mdl {
             // 表本身不存在的情况由上面的表校验覆盖
         }
 
+        // H2：注入防护——任何疑似注入特征都计入问题，使校验失败。
+        problems.extend(self.detect_injection(sql));
+
         (problems.is_empty(), problems)
+    }
+
+    /// H2：SQL 注入特征检测。返回命中的风险描述列表（空=未命中）。
+    ///
+    /// 防御重点：堆叠语句、注释截断、危险 DML/DDL、UNION 注入、系统函数等。
+    /// 注意：这是**生成侧**的兜底；真正的强隔离应在执行层用参数化查询（Prepared Statement），
+    /// 本系统的 `template_sql` 已用白名单区域值 + 数值 `top_n` 构造，天然规避拼接注入。
+    pub fn detect_injection(&self, sql: &str) -> Vec<String> {
+        let mut hits = Vec::new();
+        let lower = sql.to_ascii_lowercase();
+
+        // 注释/堆叠语句截断
+        if lower.contains("--") || lower.contains("#") || lower.contains("/*") || lower.contains("*/") {
+            hits.push("含注释或堆叠语句截断（-- / # / /* */）".into());
+        }
+        if lower.contains(';') {
+            hits.push("含多条语句分隔符（;），疑似堆叠查询".into());
+        }
+
+        // 危险关键字（DML/DDL/系统函数）
+        const DANGER: &[&str] = &[
+            "drop", "delete", "update", "insert", "alter", "truncate", "create",
+            "replace", "grant", "revoke", "exec", "execute", "union", "into",
+            "xp_", "sleep", "benchmark", "load_file", "outfile", "information_schema",
+        ];
+        for kw in DANGER {
+            // 词边界匹配，避免误伤正常列名（如 `updated_at` 不应触发 `update`）。
+            let pat = format!(r"(?i)(^|[^a-z0-9_]){kw}([^a-z0-9_]|$)");
+            if let Ok(re) = regex::Regex::new(&pat) {
+                if re.is_match(&lower) {
+                    hits.push(format!("含危险关键字：{kw}"));
+                }
+            }
+        }
+        hits
     }
 }
 
@@ -90,4 +128,39 @@ fn table_regex() -> &'static Regex {
 fn col_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"([A-Za-z_]\w*)\.([A-Za-z_]\w*)").unwrap())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> Mdl {
+        // 复用 examples 的结构（这里内联最小模型用于单测）。
+        let doc = r#"{"models":[{"name":"sales","columns":[{"name":"revenue"},{"name":"cost"}]}]}"#;
+        let d: MdlDoc = serde_json::from_str(doc).unwrap();
+        Mdl { models: d.models.into_iter().map(|m| (m.name.clone(), m)).collect() }
+    }
+
+    #[test]
+    fn valid_sql_passes() {
+        let m = sample();
+        let (ok, p) = m.validate_sql("SELECT revenue FROM sales");
+        assert!(ok, "problems: {p:?}");
+    }
+
+    #[test]
+    fn injection_detected() {
+        let m = sample();
+        let (ok, p) = m.validate_sql("SELECT revenue FROM sales; DROP TABLE sales--");
+        assert!(!ok);
+        assert!(p.iter().any(|x| x.contains("堆叠") || x.contains("注释") || x.contains("DROP")));
+    }
+
+    #[test]
+    fn unknown_table_flagged() {
+        let m = sample();
+        let (ok, p) = m.validate_sql("SELECT x FROM nonexistent");
+        assert!(!ok);
+        assert!(p.iter().any(|x| x.contains("未知表")));
+    }
 }

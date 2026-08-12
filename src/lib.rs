@@ -6,13 +6,18 @@
 //! - 抽象层：`Memory` / `LlmBackend` / `Tool` 三个 trait + `Gateway`(路由) + `Agent`(编排) + `heal`(自愈)。
 //! - 外部重服务走适配器 + 本地降级（自愈），默认零网络依赖即可编译运行。
 
+pub mod cache;
+pub mod config;
 pub mod core;
 pub mod error;
 pub mod ext;
 pub mod heal;
 pub mod knowledge;
+pub mod observe;
 pub mod persona;
 pub mod routing;
+pub mod sandbox;
+pub mod security;
 pub mod session;
 pub mod value;
 

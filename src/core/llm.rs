@@ -12,6 +12,23 @@ use crate::error::GanyuResult;
 use crate::error::GanyuError;
 use crate::value::Value;
 
+/// API 密钥类型。默认 `String`；开启 `secret` 特性后改为 `zeroize::Zeroizing<String>`，
+/// 在 Drop 时清零，避免密钥常驻内存/落入 core dump（L1）。
+/// 仅在 `network` 特性下定义（仅 `OpenAiBackend` 使用）。
+#[cfg(all(feature = "network", feature = "secret"))]
+type ApiKey = zeroize::Zeroizing<String>;
+#[cfg(all(feature = "network", not(feature = "secret")))]
+type ApiKey = String;
+
+#[cfg(all(feature = "secret", feature = "network"))]
+fn make_key(s: &str) -> ApiKey {
+    zeroize::Zeroizing::new(s.to_string())
+}
+#[cfg(all(not(feature = "secret"), feature = "network"))]
+fn make_key(s: &str) -> ApiKey {
+    s.to_string()
+}
+
 /// 对话角色（Rust `enum` 表达类型安全，而非裸字符串）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Role {
@@ -80,7 +97,7 @@ impl LlmBackend for LocalBackend {
 pub struct OpenAiBackend {
     client: reqwest::Client,
     base_url: String,
-    api_key: String,
+    api_key: ApiKey,
     model: String,
     name: String,
 }
@@ -95,7 +112,7 @@ impl OpenAiBackend {
         OpenAiBackend {
             client,
             base_url: base_url.trim_end_matches('/').to_string(),
-            api_key: api_key.to_string(),
+            api_key: make_key(api_key),
             model: model.to_string(),
             name: format!("openai:{model}"),
         }
@@ -117,7 +134,7 @@ impl LlmBackend for OpenAiBackend {
         let resp = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
+            .bearer_auth(self.api_key.as_str())
             .json(&body)
             .send()
             .await

@@ -15,10 +15,13 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
+use crate::cache::{cache_key, LruCache};
 use crate::core::memory::{DynMemory, MemoryHit};
 use crate::error::{GanyuError, GanyuResult};
 use crate::heal::with_retry_async;
+use crate::observe::{AuditEvent, AuditLog};
 use crate::value::Value;
 
 pub type DynTool = Arc<dyn Tool + Send + Sync>;
@@ -29,16 +32,57 @@ pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
     async fn invoke(&self, input: &Value) -> GanyuResult<Value>;
+
+    /// 是否为「副作用工具」（写文件/执行命令/写记忆等）。
+    /// 默认 `false`（只读）。`true` 的工具在 `ToolRegistry::call` 中**不被盲目重试**（M3），
+    /// 避免重复写、重复发、重复执行等放大故障。
+    fn side_effecting(&self) -> bool {
+        false
+    }
+
+    /// 结构化工具描述（M6 原生函数调用）：供接入真实模型时生成 tool schema。
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "name": self.name(),
+            "description": self.description(),
+            "parameters": { "type": "object", "properties": { "input": { "type": "string" } } }
+        })
+    }
 }
 
 pub struct ToolRegistry {
     tools: Mutex<HashMap<String, DynTool>>,
+    /// 只读工具结果缓存（LRU+TTL；默认 None=关，显式 `enable_tool_cache` 开启）。
+    cache: Mutex<Option<LruCache<u64, Value>>>,
+    /// 审计日志（默认 None=关）。
+    audit: Mutex<Option<Arc<AuditLog>>>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         ToolRegistry {
             tools: Mutex::new(HashMap::new()),
+            cache: Mutex::new(None),
+            audit: Mutex::new(None),
+        }
+    }
+
+    /// 开启只读工具结果缓存（缓存优化：calc/echo/file_read 等幂等结果复用）。
+    /// 副作用工具（`side_effecting`）永不缓存。`ttl` 为 0 视为关闭。
+    pub fn enable_tool_cache(&self, ttl: Duration) {
+        if ttl > Duration::ZERO {
+            *self.cache.lock().unwrap() = Some(LruCache::new(256, ttl));
+        }
+    }
+
+    /// 挂接审计日志（可观测性/合规）。
+    pub fn set_audit(&self, log: Arc<AuditLog>) {
+        *self.audit.lock().unwrap() = Some(log);
+    }
+
+    fn audit_evt(&self, ev: AuditEvent) {
+        if let Some(a) = self.audit.lock().unwrap().as_ref() {
+            a.event(ev);
         }
     }
 
@@ -47,6 +91,12 @@ impl ToolRegistry {
     }
 
     /// 调用工具。自愈：失败自动重试（指数退避）。
+    ///
+    /// M3：副作用工具（`side_effecting()==true`）不做盲目重试——失败即失败，
+    /// 防止重复写/重复发/重复执行放大故障。只读工具才享受重试自愈。
+    ///
+    /// 缓存：只读工具开启缓存时，同 `tool:input` 在 TTL 内直接命中；
+    /// 副作用工具永不缓存，防止陈旧状态复现。
     pub async fn call(&self, name: &str, input: &Value) -> GanyuResult<Value> {
         let tool = self
             .tools
@@ -55,9 +105,44 @@ impl ToolRegistry {
             .get(name)
             .cloned()
             .ok_or_else(|| GanyuError::ToolNotFound(name.to_string()))?;
-        with_retry_async(|| tool.invoke(input), 3, std::time::Duration::from_millis(50))
-            .await
-            .map_err(|e| GanyuError::ToolFailed(name.to_string(), format!("{e:?}")))
+
+        // 缓存键仅对「只读且缓存已开启」的工具生成。
+        let cache_on = self.cache.lock().unwrap().is_some();
+        let key = if cache_on && !tool.side_effecting() {
+            Some(cache_key(&[name, input.as_str()]))
+        } else {
+            None
+        };
+        if let Some(k) = &key {
+            if let Some(hit) = self.cache.lock().unwrap().as_ref().unwrap().get(k) {
+                self.audit_evt(AuditEvent::ToolCacheHit { tool: name });
+                return Ok(hit);
+            }
+        }
+
+        let start = Instant::now();
+        let result = if tool.side_effecting() {
+            tool.invoke(input)
+                .await
+                .map_err(|e| GanyuError::ToolFailed(name.to_string(), format!("{e:?}")))
+        } else {
+            with_retry_async(|| tool.invoke(input), 3, Duration::from_millis(50))
+                .await
+                .map_err(|e| GanyuError::ToolFailed(name.to_string(), format!("{e:?}")))
+        };
+        let ms = start.elapsed().as_millis() as u64;
+        self.audit_evt(AuditEvent::ToolCall { tool: name, ok: result.is_ok(), ms });
+        if let Err(GanyuError::Forbidden(reason)) = &result {
+            self.audit_evt(AuditEvent::SecurityDenial {
+                kind: "tool_forbidden",
+                reason,
+            });
+        }
+
+        if let (Ok(v), Some(k)) = (&result, &key) {
+            self.cache.lock().unwrap().as_ref().unwrap().put(*k, v.clone());
+        }
+        result
     }
 
     pub fn names(&self) -> Vec<String> {
@@ -73,10 +158,20 @@ impl ToolRegistry {
     }
 
     /// 插件发现：扫描 `dir` 下 `*.json` 清单，注册 `command` 类外部工具。
+    ///
+    /// C2 失败闭环：
+    /// - 默认**不**扫描（需 `GANYU_ALLOW_PLUGINS=1` 显式开启）；
+    /// - 每个清单项必须显式 `vetted: true`；
+    /// - 命令的程序名必须在 `GANYU_PLUGIN_ALLOW` 允许清单内（缺省为空=全拒）；
+    /// - 程序名不得含 shell 元字符/绝对路径/穿越（`is_safe_program`）。
     pub fn discover(&self, dir: &Path) -> GanyuResult<usize> {
+        if std::env::var("GANYU_ALLOW_PLUGINS").as_deref() != Ok("1") {
+            return Ok(0);
+        }
         if !dir.exists() {
             return Ok(0);
         }
+        let allow = plugin_allowlist();
         let mut count = 0;
         for entry in std::fs::read_dir(dir)? {
             let path = entry?.path();
@@ -86,10 +181,21 @@ impl ToolRegistry {
             let manifest: serde_json::Value = serde_json::from_reader(std::fs::File::open(&path)?)?;
             if let Some(arr) = manifest.as_array() {
                 for spec in arr {
+                    let vetted = spec["vetted"].as_bool().unwrap_or(false);
+                    if !vetted {
+                        continue;
+                    }
                     let name = spec["name"].as_str().unwrap_or("").to_string();
                     let command = spec["command"].as_str().unwrap_or("").to_string();
                     let desc = spec["description"].as_str().unwrap_or("").to_string();
                     if name.is_empty() || command.is_empty() {
+                        continue;
+                    }
+                    let prog = command.split_whitespace().next().unwrap_or("").to_string();
+                    if !allow.is_empty() && !allow.contains(&prog) {
+                        continue;
+                    }
+                    if !is_safe_program(&prog) {
                         continue;
                     }
                     self.register(Arc::new(CommandTool {
@@ -125,6 +231,9 @@ impl Tool for CommandTool {
     }
     fn description(&self) -> &str {
         &self.description
+    }
+    fn side_effecting(&self) -> bool {
+        true
     }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
         use std::io::Write;
@@ -269,6 +378,31 @@ fn slug(s: &str) -> String {
         .to_lowercase()
 }
 
+/// 解析 `GANYU_PLUGIN_ALLOW`（逗号分隔）为允许的程序名清单；缺省为空=全拒。
+fn plugin_allowlist() -> Vec<String> {
+    std::env::var("GANYU_PLUGIN_ALLOW")
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// C2：程序名必须是「安全 token」——仅字母数字/点/下划线/相对分隔符，
+/// 不得含 shell 元字符、不得为绝对路径、不得含 `..` 穿越。
+fn is_safe_program(prog: &str) -> bool {
+    if prog.is_empty() || prog.contains("..") {
+        return false;
+    }
+    if prog.starts_with('/') || prog.starts_with('\\') || prog.contains(':') {
+        return false; // 拒绝绝对路径 / 盘符
+    }
+    prog.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '/' || c == '-')
+}
+
 /// 声明宏：把闭包注册为工具。`body` 类型为 `Fn(&Value) -> GanyuResult<Value>`。
 #[macro_export]
 macro_rules! tool {
@@ -294,6 +428,7 @@ macro_rules! tool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn skill_slug_is_stable() {
@@ -313,5 +448,60 @@ mod tests {
         assert_eq!(book.match_intent("帮我总结一下"), Some("summarize".to_string()));
         assert_eq!(book.match_intent("今天天气"), None);
         let _ = std::fs::remove_file(".ganyu_skillbook_test_mem.json");
+    }
+
+    #[tokio::test]
+    async fn readonly_tool_result_cached() {
+        // tool! 宏的闭包处于 item 上下文，不能捕获环境变量 → 用显式 struct 实现。
+        struct Counting {
+            n: Arc<AtomicUsize>,
+        }
+        #[async_trait]
+        impl Tool for Counting {
+            fn name(&self) -> &str { "counting" }
+            fn description(&self) -> &str { "计数回显（只读，可缓存）" }
+            async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
+                self.n.fetch_add(1, Ordering::SeqCst);
+                Ok(input.clone())
+            }
+        }
+        let reg = ToolRegistry::new();
+        reg.enable_tool_cache(Duration::from_secs(60));
+        let calls = Arc::new(AtomicUsize::new(0));
+        reg.register(Arc::new(Counting { n: calls.clone() }));
+        assert_eq!(
+            reg.call("counting", &Value("x".into())).await.unwrap(),
+            Value("x".into())
+        );
+        assert_eq!(
+            reg.call("counting", &Value("x".into())).await.unwrap(),
+            Value("x".into())
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "第二次应命中缓存");
+    }
+
+    #[tokio::test]
+    async fn side_effecting_tool_never_cached() {
+        // 副作用工具即使缓存开启也不得缓存（防陈旧状态复现）。
+        struct Sink {
+            n: Arc<AtomicUsize>,
+        }
+        #[async_trait]
+        impl Tool for Sink {
+            fn name(&self) -> &str { "sink" }
+            fn description(&self) -> &str { "副作用写工具（测试）" }
+            fn side_effecting(&self) -> bool { true }
+            async fn invoke(&self, _: &Value) -> GanyuResult<Value> {
+                self.n.fetch_add(1, Ordering::SeqCst);
+                Ok(Value("done".into()))
+            }
+        }
+        let reg = ToolRegistry::new();
+        reg.enable_tool_cache(Duration::from_secs(60));
+        let n = Arc::new(AtomicUsize::new(0));
+        reg.register(Arc::new(Sink { n: n.clone() }));
+        let _ = reg.call("sink", &Value("a".into())).await.unwrap();
+        let _ = reg.call("sink", &Value("a".into())).await.unwrap();
+        assert_eq!(n.load(Ordering::SeqCst), 2, "副作用工具必须每次都真正执行");
     }
 }

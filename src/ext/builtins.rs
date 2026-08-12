@@ -10,6 +10,7 @@ use std::sync::Arc;
 use crate::core::memory::DynMemory;
 use crate::error::{GanyuError, GanyuResult};
 use crate::ext::{Tool, ToolRegistry};
+use crate::security;
 use crate::value::Value;
 
 /// 注册全部内置工具。记忆类工具需要 `memory` 句柄。
@@ -37,6 +38,8 @@ pub fn register_core_tools(reg: &ToolRegistry, memory: DynMemory) {
     reg.register(Arc::new(FileRead));
     reg.register(Arc::new(FileWrite));
     reg.register(Arc::new(FileList));
+    // C1：exec 默认不编译进二进制（失败闭环）；需 `shell` 特性 + 运行时 `GANYU_ALLOW_SHELL=1`。
+    #[cfg(feature = "shell")]
     reg.register(Arc::new(ExecTool));
     reg.register(Arc::new(RememberTool {
         memory: memory.clone(),
@@ -65,21 +68,27 @@ impl Tool for FileRead {
         "file_read"
     }
     fn description(&self) -> &str {
-        "读取文本文件内容（输入：路径，或在句中含路径）"
+        "读取沙箱内的文本文件（输入：相对路径；C3/C4 禁止穿越沙箱根）"
+    }
+    fn side_effecting(&self) -> bool {
+        false
     }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
         let raw = input.as_str().trim();
-        if let Ok(text) = std::fs::read_to_string(raw) {
+        // C3/C4：强制解析到沙箱根内，拒绝绝对路径/穿越/逃逸。
+        let path = security::resolve_sandboxed(raw)?;
+        if let Ok(text) = std::fs::read_to_string(&path) {
             return Ok(Value(text));
         }
         if let Some(p) = extract_path_token(raw) {
-            if let Ok(text) = std::fs::read_to_string(&p) {
+            let path2 = security::resolve_sandboxed(&p)?;
+            if let Ok(text) = std::fs::read_to_string(&path2) {
                 return Ok(Value(text));
             }
         }
         Err(GanyuError::ToolFailed(
             "file_read".into(),
-            format!("{raw}: 文件未找到"),
+            format!("{raw}: 文件未找到（沙箱内）"),
         ))
     }
 }
@@ -104,7 +113,10 @@ impl Tool for FileWrite {
         "file_write"
     }
     fn description(&self) -> &str {
-        "写入文本文件（输入：首行路径，空一行，余下为内容）"
+        "写入沙箱内的文本文件（输入：首行相对路径，空一行，余下为内容）"
+    }
+    fn side_effecting(&self) -> bool {
+        true
     }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
         let s = input.as_str();
@@ -117,10 +129,12 @@ impl Tool for FileWrite {
                 "首行必须提供路径".into(),
             ));
         }
+        // C3/C4：解析到沙箱根内，拒绝逃逸。
+        let resolved = security::resolve_sandboxed(&path)?;
         let n = content.len();
-        std::fs::write(&path, content)
+        std::fs::write(&resolved, content)
             .map_err(|e| GanyuError::ToolFailed("file_write".into(), format!("{path}: {e}")))?;
-        Ok(Value(format!("已写入 {path}（{n} 字节）")))
+        Ok(Value(format!("已写入 {path}（{n} 字节，沙箱内）")))
     }
 }
 
@@ -133,12 +147,17 @@ impl Tool for FileList {
         "file_list"
     }
     fn description(&self) -> &str {
-        "列出目录条目（输入：目录路径）"
+        "列出沙箱内的目录条目（输入：相对目录路径）"
+    }
+    fn side_effecting(&self) -> bool {
+        false
     }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
         let dir = input.as_str().trim();
+        // C3/C4：沙箱内目录列举，拒绝逃逸。
+        let resolved = security::resolve_sandboxed(dir)?;
         let mut entries = Vec::new();
-        for e in std::fs::read_dir(dir)
+        for e in std::fs::read_dir(&resolved)
             .map_err(|e| GanyuError::ToolFailed("file_list".into(), format!("{dir}: {e}")))?
         {
             let e = e.map_err(|e| GanyuError::ToolFailed("file_list".into(), e.to_string()))?;
@@ -160,11 +179,21 @@ impl Tool for ExecTool {
         "exec"
     }
     fn description(&self) -> &str {
-        "在本机执行 shell 命令（输入：命令字符串）"
+        "在本机执行 shell 命令（默认关闭；需 shell 特性 + GANYU_ALLOW_SHELL=1）"
+    }
+    fn side_effecting(&self) -> bool {
+        true
     }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
         use std::io::Write;
         use std::process::{Command, Stdio};
+
+        // C1 失败闭环：即使 `shell` 特性已编译，运行时仍需显式开启才放行。
+        if !security::shell_allowed() {
+            return Err(GanyuError::Forbidden(
+                "exec 已禁用（默认关闭；需 shell 特性编译且设置 GANYU_ALLOW_SHELL=1 才放行）".into(),
+            ));
+        }
 
         let cmd_str = input.as_str().trim();
         let (prog, flag) = if cfg!(windows) {
@@ -172,12 +201,21 @@ impl Tool for ExecTool {
         } else {
             ("sh", "-c")
         };
-        let mut child = Command::new(prog)
-            .arg(flag)
-            .arg(cmd_str)
+        let mut cmd = Command::new(prog);
+        cmd.arg(flag).arg(cmd_str)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        // H3：仅在子进程内套 Landlock FS 沙箱（Unix + sandbox 特性），约束派生进程，
+        // 不波及 agent 主进程。非 Linux/未开启则为无操作。
+        #[cfg(all(unix, feature = "sandbox"))]
+        {
+            let root = security::sandbox_root();
+            unsafe {
+                cmd.pre_exec(move || crate::sandbox::apply_fs_sandbox(&root));
+            }
+        }
+        let mut child = cmd
             .spawn()
             .map_err(|e| GanyuError::ToolFailed("exec".into(), e.to_string()))?;
         let _ = child.stdin.take().map(|mut s| s.write_all(b""));
@@ -213,6 +251,9 @@ impl Tool for RememberTool {
     fn description(&self) -> &str {
         "记住一条事实（输入：首行 key，空一行，余下为 value）"
     }
+    fn side_effecting(&self) -> bool {
+        true
+    }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
         let s = input.as_str();
         let mut it = s.splitn(2, '\n');
@@ -243,6 +284,9 @@ impl Tool for RecallTool {
     fn description(&self) -> &str {
         "回忆一条事实（输入：key）"
     }
+    fn side_effecting(&self) -> bool {
+        false
+    }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
         let key = input.as_str().trim();
         let uri = format!("viking://user/memory/{key}");
@@ -265,6 +309,9 @@ impl Tool for RagTool {
     }
     fn description(&self) -> &str {
         "在记忆知识库中检索（输入：查询）"
+    }
+    fn side_effecting(&self) -> bool {
+        false
     }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
         let hits = self.memory.search(input.as_str(), "viking://").await?;
@@ -294,8 +341,12 @@ impl Tool for WebFetch {
     }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
         let url = input.as_str().trim();
+        // C5：出站前做 SSRF 防护（拒绝内网/环回/链路本地/云元数据等）。
+        security::ssrf_guard(url)?;
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(20))
+            // 关闭自动重定向：避免 30x 跳转到内网绕过入口校验。
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         let resp = client
@@ -303,6 +354,15 @@ impl Tool for WebFetch {
             .send()
             .await
             .map_err(|e| GanyuError::BackendUnavailable(format!("web_fetch: {e}")))?;
+        // 若服务端返回重定向，二次校验目标（防止重定向逃逸）。
+        if resp.status().is_redirection() {
+            if let Some(loc) = resp.headers().get(reqwest::header::LOCATION) {
+                let loc = loc.to_str().unwrap_or("").to_string();
+                security::ssrf_guard(&loc)?;
+            } else {
+                return Err(GanyuError::Ssrf("非法重定向（缺 Location）".into()));
+            }
+        }
         let text = resp
             .text()
             .await

@@ -71,8 +71,20 @@ async fn main() -> GanyuResult<()> {
     let cmd = cmd.as_deref().unwrap_or("chat");
 
     let memory: DynMemory = Arc::new(LocalMemory::new(".ganyu_memory.json"));
+
+    // 工程化配置面：集中读取 GANYU_*，据此启用缓存/限速/审计。
+    let cfg = ganyu_agent::config::GanyuConfig::from_env();
+    let audit = Arc::new(ganyu_agent::observe::AuditLog::from_config());
+
     let mut gateway = Gateway::new();
     gateway.register(Arc::new(LocalBackend) as DynBackend);
+    if cfg.rate_per_min > 0 {
+        gateway = gateway.with_rate_limit(cfg.rate_per_min);
+    }
+    if cfg.llm_cache_enabled() {
+        gateway.enable_llm_cache(cfg.llm_cache_ttl);
+    }
+    gateway.set_audit(audit.clone());
 
     if let (Ok(base), Ok(key)) = (
         std::env::var("OPENAI_API_BASE"),
@@ -84,10 +96,20 @@ async fn main() -> GanyuResult<()> {
         let _ = (base, key);
     }
 
-    // 工具层：内置能力 + 插件发现
+    // 工具层：内置能力 + 插件发现 + 只读缓存
     let tools = Arc::new(ToolRegistry::new());
     register_core_tools(&tools, memory.clone());
+    if cfg.tool_cache_enabled() {
+        tools.enable_tool_cache(cfg.tool_cache_ttl);
+    }
+    tools.set_audit(audit.clone());
     let _ = tools.discover(Path::new("plugins"));
+
+    // 安全基线自检（治理面）：启动时输出建议，不阻断。
+    for advice in ganyu_agent::config::security_baseline(&cfg) {
+        eprintln!("[baseline] {advice}");
+        audit.event(ganyu_agent::observe::AuditEvent::BaselineAdvice { advice: &advice });
+    }
 
     // 技能层：内置特性技能 + 注册为 `skill:<name>` 工具
     let skills = Arc::new(SkillBook::new(memory.clone()));
@@ -306,6 +328,9 @@ fn build_workflow(
 }
 
 async fn selftest() {
+    // 自检使用 CWD 作为文件沙箱根（测试环境），保持与历史行为/清理一致；
+    // 真正运行时默认是隔离的 `.ganyu_workspace`（C3/C4）。
+    std::env::set_var("GANYU_FS_ROOT", ".");
     let mut pass = 0usize;
     let mut fail = 0usize;
     macro_rules! check {
@@ -338,7 +363,7 @@ async fn selftest() {
 
     // 2) SAG 端到端（本地，无网络）
     let memory: DynMemory = Arc::new(LocalMemory::new(".ganyu_selftest_mem.json"));
-    let mut gw = Gateway::new();
+    let gw = Gateway::new();
     gw.register(Arc::new(LocalBackend) as DynBackend);
     let skills = Arc::new(SkillBook::new(memory.clone()));
     register_core_skills(&skills);
@@ -435,7 +460,7 @@ async fn selftest() {
             Ok(Value("ok".into()))
         }
     }
-    let mut g2 = Gateway::new();
+    let g2 = Gateway::new();
     g2.register(Arc::new(FailBackend) as DynBackend);
     g2.register(Arc::new(OkBackend) as DynBackend);
     let r = g2.complete(&[Message::user("hi")]).await;

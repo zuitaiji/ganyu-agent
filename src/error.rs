@@ -25,6 +25,22 @@ pub enum GanyuError {
     #[error("plugin error: {0}")]
     Plugin(String),
 
+    /// 安全策略拒绝（失败闭环：默认拒绝，需显式开启才放行）。
+    #[error("forbidden by security policy: {0}")]
+    Forbidden(String),
+
+    /// 检测到疑似注入（H2 SQL 注入防护）。
+    #[error("possible injection detected: {0:?}")]
+    Injection(Vec<String>),
+
+    /// 触发速率限制（M2）。
+    #[error("rate limited: {0}")]
+    RateLimited(String),
+
+    /// SSRF 防护拦截（C5）。
+    #[error("ssrf guard blocked request: {0}")]
+    Ssrf(String),
+
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 

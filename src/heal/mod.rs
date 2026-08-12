@@ -3,6 +3,7 @@
 //! 这是"自愈"的一等公民实现：任何会失败的操作（LLM 调用、工具执行）都包在这层里，
 //! 失败时自动重试、熔断不健康后端、级联到下一个可用后端（lkgp 粘路径在外层 Gateway）。
 
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// 熔断器状态机。
@@ -117,6 +118,46 @@ where
         }
     }
     Err(errs)
+}
+
+/// 令牌桶速率限制器（M2）：限制单位时间内的请求数，避免对后端/工具造成洪泛。
+///
+/// - 默认不启用（不传即无限速），由 `Gateway::with_rate_limit` 显式开启。
+/// - `try_acquire` 原子地扣减一个令牌；无令牌时返回 `false`（调用方可据此降级/重试）。
+pub struct RateLimiter {
+    capacity: f64,
+    refill_per_sec: f64,
+    tokens: Mutex<f64>,
+    last: Mutex<std::time::Instant>,
+}
+
+impl RateLimiter {
+    /// `per_min`：每分钟允许的请求上限（令牌桶容量 == 速率）。
+    pub fn new(per_min: u32) -> Self {
+        let per_min = per_min.max(1) as f64;
+        RateLimiter {
+            capacity: per_min,
+            refill_per_sec: per_min / 60.0,
+            tokens: Mutex::new(per_min),
+            last: Mutex::new(std::time::Instant::now()),
+        }
+    }
+
+    /// 尝试获取一个令牌；成功返回 `true`。
+    pub fn try_acquire(&self) -> bool {
+        let mut tokens = self.tokens.lock().unwrap();
+        let mut last = self.last.lock().unwrap();
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(*last).as_secs_f64();
+        *tokens = (*tokens + elapsed * self.refill_per_sec).min(self.capacity);
+        *last = now;
+        if *tokens >= 1.0 {
+            *tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ edition = "2021"
 description = "有温度、能自进化、可拓展、可自愈的完备 agent 系统（Rust）。会话UUID + 统一字符串值 + 抽象层。"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "sync"] }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -21,9 +21,40 @@ optional = true
 default-features = false
 features = ["json", "rustls-tls"]
 
+# 记忆加密（H1）/ 密钥擦除（L1）—— 默认关闭，生产用 --features crypto,secret
+[dependencies.aes-gcm]
+version = "0.10"
+optional = true
+
+[dependencies.rand]
+version = "0.8"
+optional = true
+
+[dependencies.zeroize]
+version = "1"
+optional = true
+
+[dependencies.sha2]
+version = "0.10"
+optional = true
+
+# 进程级 FS 沙箱：Landlock 仅 Linux 内核可用，故作为「目标特定」可选依赖——
+# 仅在 Linux 构建时才拉取，避免在非 Linux（如 Windows/macOS）破坏编译。
+[target.'cfg(target_os = "linux")'.dependencies.landlock]
+version = "0.4"
+optional = true
+
 [features]
 default = []
 network = ["dep:reqwest"]
+crypto = ["dep:aes-gcm", "dep:rand", "dep:sha2"]
+secret = ["dep:zeroize"]
+# exec / shell 工具默认关闭（C1 失败闭环）；显式开启才编译进二进制。
+shell = []
+# 进程级 FS 沙箱（Landlock，仅 Linux 生效）；默认关闭，开启后 exec 才进入沙箱。
+sandbox = ["dep:landlock"]
+# 便捷组合：生产加固全开（不含 sandbox——Landlock 仅 Linux；跨平台隔离由 C3/C4 文件沙箱兜底）。
+hardened = ["network", "crypto", "secret", "shell"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "sync"] }

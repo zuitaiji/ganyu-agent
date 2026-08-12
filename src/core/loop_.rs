@@ -52,11 +52,9 @@ impl Reasoner for LocalReasoner {
     fn decide(&self, user_msg: &str, known: &HashSet<String>) -> GanyuResult<Decision> {
         for line in user_msg.lines() {
             let line = line.trim();
-            if let Some(rest) = line.strip_prefix('@') {
-                let mut it = rest.splitn(2, char::is_whitespace);
-                let tool = it.next().unwrap_or("").to_string();
-                let args = it.next().unwrap_or("").trim().to_string();
-                if !tool.is_empty() && known.contains(&tool) {
+            // M6：兼容 JSON 原生函数调用与 `@tool arg` 离线脚本两种语法。
+            if let Some((tool, args)) = parse_tool_call(line) {
+                if known.contains(&tool) {
                     let remaining = strip_first_tool_line(user_msg, line);
                     return Ok(Decision::Act { tool, args, remaining });
                 }
@@ -64,6 +62,48 @@ impl Reasoner for LocalReasoner {
         }
         Ok(Decision::Final(default_fallback(user_msg)))
     }
+}
+
+/// 解析单条工具调用（M6 原生函数调用 + 向后兼容 `@tool arg`）。
+///
+/// 支持两种形式：
+/// - JSON：`{"tool":"x","args":"y"}` 或 OpenAI `function_call` 风格（`name`/`arguments`）；
+/// - 脚本：`@tool arg`。
+/// 返回 `(工具名, 参数)`；无法解析返回 `None`。
+pub fn parse_tool_call(text: &str) -> Option<(String, String)> {
+    let t = text.trim();
+    if t.is_empty() {
+        return None;
+    }
+    // JSON 原生函数调用
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(t) {
+        if v.is_object() {
+            let name = v
+                .get("tool")
+                .and_then(|x| x.as_str())
+                .or_else(|| v.get("name").and_then(|x| x.as_str()))
+                .map(|s| s.to_string());
+            if let Some(name) = name {
+                let args = v
+                    .get("args")
+                    .and_then(|x| x.as_str())
+                    .or_else(|| v.get("arguments").and_then(|x| x.as_str()))
+                    .unwrap_or("")
+                    .to_string();
+                return Some((name, args));
+            }
+        }
+    }
+    // `@tool arg` 脚本形式
+    if let Some(rest) = t.strip_prefix('@') {
+        let mut it = rest.splitn(2, char::is_whitespace);
+        let tool = it.next().unwrap_or("").to_string();
+        let args = it.next().unwrap_or("").trim().to_string();
+        if !tool.is_empty() {
+            return Some((tool, args));
+        }
+    }
+    None
 }
 
 /// 去掉脚本中首个被命中的 `@tool` 行，返回剩余内容（供循环下一步）。
