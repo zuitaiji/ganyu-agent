@@ -1,27 +1,22 @@
 # ganyu-agent 安装指南
 
-> 三种方式：一键脚本（推荐）· cargo install（开发者）· 源码构建（贡献者）。
-> 前置：Rust/cargo（[rustup.rs](https://rustup.rs)）。默认构建零外部依赖、离线可装。
+> 三种方式：一键脚本（推荐，默认免编译）· cargo install（开发者）· 源码构建（贡献者）。
+> **免编译安装**：从 GitHub Releases 下载预编译 hardened 二进制，零 Rust 依赖，装到独立目录，删目录即卸载。
 
-## 1. 一键脚本
+## 1. 一键脚本（Hermes 式一条命令）
 
 ```bash
-# Linux / macOS / Git-Bash（仓库内）
-bash install.sh --features hardened
-# 远程（替换为你的直链）
+# Linux / macOS / Git-Bash（远程一条命令）
 curl -fsSL https://raw.githubusercontent.com/zuitaiji/ganyu-agent/main/install.sh | bash
-
-# Windows PowerShell（仓库内）
-.\install.ps1 -Features hardened
-# 远程
+# Windows PowerShell（远程一条命令）
 iex (irm https://raw.githubusercontent.com/zuitaiji/ganyu-agent/main/install.ps1)
 ```
 
-脚本行为：检测 cargo → 定位/克隆源码 → `cargo install --locked --root <prefix>`
-（构建目录在 `$prefix\target` 持久缓存，幂等升级增量编译）→ selftest 自检 → 创建 `ganyu` 别名 → PATH 提示。
+脚本行为（默认免编译）：GitHub API 查最新 release → 下载对应平台资产 → 解压到
+`<prefix>/bin` → selftest 自检 → 创建 `ganyu` 别名 → PATH 提示。幂等：重复执行覆盖升级，不动 config.toml 与记忆文件。
 
-参数：`--features`（默认空=默认构建；生产 `hardened`）、`--prefix`（sh 默认 `~/.local`，ps1 默认 `~\.ganyu`）、
-`--branch` / `--repo`、`--no-alias`、`-Dev`（ps1：dev profile 快装，验证用）。
+参数：`--version`（默认 latest，或 v0.1.0）、`--prefix`（sh 默认 `~/.local`，ps1 默认 `~\.ganyu`）、
+`--no-alias`。**指定 `--features hardened` 时回退源码编译**（本地有仓库用本地源码，否则 clone），适合要定制特性的开发者。
 
 ## 2. cargo install（开发者/CI）
 
@@ -47,15 +42,11 @@ cargo test
 ganyu-agent selftest
 ganyu-agent doctor          # 环境/配置/网关/能力面一键体检
 
-# 2. 写一次配置文件（OpenAI 兼容端点均可）
-#    ~/.ganyu/config.toml
-#    [model]
-#    base_url = "https://api.openai.com/v1"
-#    api_key = "sk-..."
-#    model = "你的模型id"
+# 2. 配置模型（交互式向导，回车沿用当前值）
+ganyu setup                 # 问 base_url / api_key / model → 写入 ~/.ganyu/config.toml
 
 # 3. 直接对话（交互式 REPL，多轮上下文延续；/quit 或 Ctrl+C 退出）
-ganyu-agent chat
+ganyu-agent chat            # 或 ganyu
 ```
 > 配置后 `run`/`agent`/`sag` 也自动走真实模型；未配置则离线本地兜底（功能不缺失）。
 

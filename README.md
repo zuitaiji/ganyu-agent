@@ -22,19 +22,15 @@
 ## 快速开始（开箱即用）
 
 ```bash
-# 1. 安装（详见 docs/install.md）
-bash install.sh --features hardened        # Linux/macOS/Git-Bash
-.\install.ps1 -Features hardened           # Windows
+# 1. 安装（Hermes 式一条命令，免编译下载 release；详见 docs/install.md）
+curl -fsSL https://raw.githubusercontent.com/zuitaiji/ganyu-agent/main/install.sh | bash   # Linux/macOS/Git-Bash
+iex (irm https://raw.githubusercontent.com/zuitaiji/ganyu-agent/main/install.ps1)          # Windows
 
-# 2. 写一次配置文件（OpenAI 兼容端点均可）
-#    ~/.ganyu/config.toml
-#    [model]
-#    base_url = "https://api.openai.com/v1"
-#    api_key = "sk-..."
-#    model = "你的模型id"
+# 2. 配置模型（交互式向导，回车沿用当前值）
+ganyu setup
 
 # 3. 直接对话（交互式 REPL，多轮上下文延续；/quit 或 Ctrl+C 退出）
-ganyu-agent chat
+ganyu chat
 ```
 
 > 模型已配置时 `run`/`agent`/`sag` 自动走真实模型；未配置则离线本地兜底，功能照常。
@@ -42,12 +38,17 @@ ganyu-agent chat
 ## 使用速查
 
 ```bash
-ganyu-agent chat                 # 交互式对话（推荐入口）
-ganyu-agent doctor               # 环境诊断（配置/特性/网关/能力面）
-ganyu-agent run "你好"            # 单次对话
-ganyu-agent run "@calc (1+2)*3"  # 工具（离线可用）
-ganyu-agent agent "任务" --mode multi   # 多范式
-ganyu-agent tools | modes | selftest    # 工具/范式/自检
+ganyu chat                 # 交互式对话（推荐入口，等同 ganyu-agent chat）
+ganyu setup                # 交互式配置模型（base_url/api_key/model 写入 config.toml）
+ganyu model                # 查看当前模型；ganyu model <新模型id> 切换
+ganyu models               # 查询网关全部可用模型（需已配置端点）
+ganyu doctor               # 环境诊断（配置/特性/网关/能力面）
+ganyu update               # 从 GitHub Releases 自动升级到最新版
+ganyu run "你好"            # 单次对话
+ganyu run "@calc (1+2)*3"  # 工具（离线可用）
+ganyu agent "任务" --mode multi   # 多范式
+ganyu gateway start        # 接 Telegram 消息平台（可选）
+ganyu tools | modes | selftest    # 工具/范式/自检
 ```
 
 ## 架构（详见 docs/architecture.md）

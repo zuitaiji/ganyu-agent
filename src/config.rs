@@ -9,7 +9,69 @@
 //! 说明：既有 `security.rs` / `memory.rs` 的读取点是**执行面**（失败闭环），保持原位不动；
 //! 本模块是**配置面**的权威文档与新增能力（缓存/审计/限速）的入口。两处共用同一 env 命名空间。
 
+use std::path::Path;
 use std::time::Duration;
+
+use crate::GanyuError;
+
+/// 配置文件路径（与 `load_model_config` 同优先级：`$GANYU_CONFIG` > `~/.ganyu/config.toml` > `./ganyu.toml`）。
+pub fn config_path() -> Option<String> {
+    std::env::var("GANYU_CONFIG").ok().or_else(|| {
+        std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .ok()
+            .map(|h| format!("{h}/.ganyu/config.toml"))
+            .or_else(|| Some("ganyu.toml".to_string()))
+    })
+}
+
+/// 当前配置文件中的 [model] 段（供 `setup` / `model` 显示现状）。
+pub fn read_model_config() -> (Option<String>, Option<String>, Option<String>) {
+    let path = config_path();
+    let Some(path) = path else { return (None, None, None) };
+    let Ok(text) = std::fs::read_to_string(&path) else { return (None, None, None) };
+    #[derive(serde::Deserialize)]
+    struct FileCfg {
+        #[serde(default)]
+        model: Option<ModelCfg>,
+    }
+    #[derive(serde::Deserialize)]
+    struct ModelCfg {
+        base_url: Option<String>,
+        api_key: Option<String>,
+        model: Option<String>,
+    }
+    let Ok(parsed) = toml::from_str::<FileCfg>(&text) else { return (None, None, None) };
+    let Some(m) = parsed.model else { return (None, None, None) };
+    (m.base_url, m.api_key, m.model)
+}
+
+/// 写入 [model] 段（`ganyu setup` 用）。保留文件中其他段，创建父目录。
+pub fn write_model_config(base_url: &str, api_key: &str, model: &str) -> crate::GanyuResult<()> {
+    let path = config_path().ok_or_else(|| {
+        GanyuError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "无法确定配置文件路径（GANYU_CONFIG/USERPROFILE/HOME 均未设置）",
+        ))
+    })?;
+    let mut value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
+        .unwrap_or_else(|| toml::Value::Table(Default::default()));
+    let mut model_tbl = toml::map::Map::new();
+    model_tbl.insert("base_url".to_string(), toml::Value::String(base_url.to_string()));
+    model_tbl.insert("api_key".to_string(), toml::Value::String(api_key.to_string()));
+    model_tbl.insert("model".to_string(), toml::Value::String(model.to_string()));
+    if let toml::Value::Table(map) = &mut value {
+        map.insert("model".to_string(), toml::Value::Table(model_tbl));
+    }
+    if let Some(parent) = Path::new(&path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let text = toml::to_string_pretty(&value).map_err(|e| GanyuError::Toml(e.to_string()))?;
+    std::fs::write(&path, text)?;
+    Ok(())
+}
 
 /// 全部 `GANYU_*` 环境变量及其含义（文档面，供 README/SECURITY 引用）。
 pub const ENV_DOCS: &[(&str, &str)] = &[

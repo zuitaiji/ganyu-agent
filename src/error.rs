@@ -47,6 +47,9 @@ pub enum GanyuError {
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
 
+    #[error("toml: {0}")]
+    Toml(String),
+
     #[error("regex: {0}")]
     Regex(#[from] regex::Error),
 

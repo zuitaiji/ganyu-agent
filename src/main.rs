@@ -316,6 +316,234 @@ async fn main() -> GanyuResult<()> {
                 std::process::exit(1);
             }
         }
+        "setup" => {
+            // 交互式配置向导（Hermes 式）：逐步提问 base_url/api_key/model 写入 config.toml。
+            // 也支持参数模式：ganyu setup --base_url X --api_key Y --model Z（脚本/CI 用）。
+            use std::io::{IsTerminal, Write as _};
+
+            let (cur_base, cur_key, cur_model) = ganyu_agent::config::read_model_config();
+            let mask = |s: &Option<String>| {
+                s.as_deref().map(|v| {
+                    if v.len() > 8 {
+                        format!("{}…{}", &v[..4], &v[v.len() - 4..])
+                    } else {
+                        "****".to_string()
+                    }
+                })
+            };
+
+            // 参数模式：解析 positional 中的 --key value
+            let mut arg_base: Option<String> = None;
+            let mut arg_key: Option<String> = None;
+            let mut arg_model: Option<String> = None;
+            let mut it = positional.iter();
+            while let Some(a) = it.next() {
+                match a.as_str() {
+                    "--base_url" => arg_base = it.next().cloned(),
+                    "--api_key" => arg_key = it.next().cloned(),
+                    "--model" => arg_model = it.next().cloned(),
+                    _ => {}
+                }
+            }
+
+            let ask = |label: &str, cur: Option<String>, is_secret: bool| -> std::io::Result<String> {
+                let hint = if is_secret {
+                    mask(&cur).map(|m| format!(" [{m}]")).unwrap_or_default()
+                } else {
+                    cur.as_deref().map(|c| format!(" [{c}]")).unwrap_or_default()
+                };
+                print!("{label}{hint}: ");
+                std::io::stdout().flush()?;
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                let v = line.trim().to_string();
+                if v.is_empty() {
+                    Ok(cur.unwrap_or_default())
+                } else {
+                    Ok(v)
+                }
+            };
+
+            let interactive = std::io::stdin().is_terminal();
+            let (base, key, model) = if interactive && arg_base.is_none() && arg_key.is_none() && arg_model.is_none() {
+                println!("== ganyu setup（配置模型，回车沿用当前值）==");
+                let base = ask("base_url", cur_base.clone(), false)?;
+                let key = ask("api_key", cur_key.clone(), true)?;
+                let model = ask("model", cur_model.clone(), false)?;
+                (base, key, model)
+            } else {
+                (
+                    arg_base.or(cur_base).unwrap_or_default(),
+                    arg_key.or(cur_key).unwrap_or_default(),
+                    arg_model.or(cur_model).unwrap_or_default(),
+                )
+            };
+
+            if base.trim().is_empty() || key.trim().is_empty() || model.trim().is_empty() {
+                eprintln!("base_url / api_key / model 均不能为空（参数模式示例：ganyu setup --base_url X --api_key Y --model Z）");
+                std::process::exit(2);
+            }
+
+            ganyu_agent::config::write_model_config(base.trim(), key.trim(), model.trim())?;
+            // 写入后立即生效（env 覆盖规则：setup 显式写入，强制刷新）。
+            std::env::set_var("OPENAI_API_BASE", base.trim());
+            std::env::set_var("OPENAI_API_KEY", key.trim());
+            std::env::set_var("OPENAI_MODEL", model.trim());
+            let path = ganyu_agent::config::config_path().unwrap_or_default();
+            println!("✅ 已写入 {path}");
+            println!("   模型: {} ({}，key={})", model.trim(), base.trim(), mask(&Some(key.trim().to_string())).unwrap_or_default());
+            println!("   直接对话: ganyu-agent chat（或 ganyu）");
+        }
+        "update" => {
+            // Hermes 式自更新：从 GitHub Releases 下载最新预编译二进制，覆盖 ~/.ganyu/bin。
+            #[cfg(feature = "network")]
+            {
+                let req_version = positional
+                    .iter()
+                    .find(|a| a.starts_with("v") && a[1..].chars().all(|c| c.is_ascii_digit() || c == '.'))
+                    .cloned()
+                    .unwrap_or_else(|| "latest".to_string());
+                let api_url = format!("https://api.github.com/repos/zuitaiji/ganyu-agent/releases/{req_version}");
+                let client = reqwest::Client::builder()
+                    .user_agent("ganyu-update")
+                    .build()
+                    .map_err(|e| GanyuError::Http(e.to_string()))?;
+                let release: serde_json::Value = client
+                    .get(&api_url)
+                    .send().await
+                    .map_err(|e| GanyuError::Http(e.to_string()))?
+                    .error_for_status()
+                    .map_err(|e| GanyuError::Http(e.to_string()))?
+                    .json().await
+                    .map_err(|e| GanyuError::Http(e.to_string()))?;
+                let tag = release["tag_name"].as_str().unwrap_or(&req_version);
+
+                // 平台资产名（与 install.ps1 / release.yml 一致）
+                let os = std::env::consts::OS;
+                let asset = match os {
+                    "windows" => {
+                        if std::env::var("PROCESSOR_ARCHITECTURE").as_deref() == Ok("ARM64") {
+                            "ganyu-agent-windows-arm64.zip".to_string()
+                        } else {
+                            "ganyu-agent-windows-x86_64.zip".to_string()
+                        }
+                    }
+                    "linux" => format!(
+                        "ganyu-agent-linux-{}.tar.gz",
+                        if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" }
+                    ),
+                    "macos" => format!(
+                        "ganyu-agent-macos-{}.tar.gz",
+                        if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" }
+                    ),
+                    other => {
+                        eprintln!("暂不支持平台: {other}（可源码编译: git clone + cargo install --features hardened）");
+                        std::process::exit(1);
+                    }
+                };
+
+                let url = release["assets"]
+                    .as_array()
+                    .and_then(|a| a.iter().find(|x| x["name"].as_str() == Some(asset.as_str())))
+                    .and_then(|x| x["browser_download_url"].as_str())
+                    .map(|u| u.to_string());
+                let Some(url) = url else {
+                    eprintln!("release {tag} 中未找到资产 {asset}（可能尚未发布，先跑 git tag v0.1.0 && git push --tags）");
+                    std::process::exit(1);
+                };
+
+                let home = std::env::var("USERPROFILE")
+                    .or_else(|_| std::env::var("HOME"))
+                    .unwrap_or_else(|_| ".".into());
+                let bin_dir = format!("{home}/.ganyu/bin");
+                std::fs::create_dir_all(&bin_dir)?;
+                let bin_path = format!("{bin_dir}/ganyu-agent{}", if os == "windows" { ".exe" } else { "" });
+
+                println!("[update] {tag} → {bin_path}");
+                let tmp = std::env::temp_dir().join(&asset);
+                let bytes = client.get(&url).send().await
+                    .map_err(|e| GanyuError::Http(e.to_string()))?
+                    .error_for_status()
+                    .map_err(|e| GanyuError::Http(e.to_string()))?
+                    .bytes().await
+                    .map_err(|e| GanyuError::Http(e.to_string()))?;
+                std::fs::write(&tmp, &bytes)?;
+                println!("[update] 下载完成（{} bytes），解压替换…", bytes.len());
+
+                // 解压：zip（Windows）用 zip crate？—— 简化：Windows 下调用 Expand-Archive 太重；
+                // 这里用纯 Rust 解压 zip 需要加依赖，改为：Windows 用 tar 解 zip 不可行。
+                // 方案：release 资产对 Windows 改发 .zip；解压用 `powershell Expand-Archive`。
+                // 为免引入 zip crate，Linux/macOS 用 tar 命令，Windows 用 Expand-Archive。
+                #[cfg(target_os = "windows")]
+                {
+                    use std::process::Command;
+                    let ps_cmd = format!(
+                        "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                        tmp.display().to_string().replace('\\', "/"),
+                        bin_dir.replace('\\', "/")
+                    );
+                    let status = Command::new("powershell")
+                        .args(["-NoProfile", "-Command", ps_cmd.as_str()])
+                        .status()
+                        .map_err(|e| GanyuError::Io(e))?;
+                    if !status.success() {
+                        eprintln!("解压失败（Expand-Archive）。请手动解压 {tmp:?} 到 {bin_dir}");
+                        std::process::exit(1);
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    use std::process::Command;
+                    let status = Command::new("tar")
+                        .args(["-xzf", tmp.to_str().unwrap(), "-C", &bin_dir])
+                        .status()
+                        .map_err(|e| GanyuError::Io(e))?;
+                    if !status.success() {
+                        eprintln!("解压失败。请手动解压 {tmp:?} 到 {bin_dir}");
+                        std::process::exit(1);
+                    }
+                }
+                let _ = std::fs::remove_file(&tmp);
+
+                // 别名同步 + 自检
+                if os == "windows" {
+                    let _ = std::fs::copy(&bin_path, format!("{bin_dir}/ganyu.exe"));
+                } else {
+                    let _ = std::fs::remove_file(format!("{bin_dir}/ganyu"));
+                    let _ = std::fs::hard_link(&bin_path, format!("{bin_dir}/ganyu"));
+                }
+                println!("[update] ✅ 已更新到 {tag}。运行 ganyu-agent doctor 验证。");
+            }
+            #[cfg(not(feature = "network"))]
+            {
+                eprintln!("当前构建无 network 特性，无法联网更新。请用 --features network/hardened 编译，或 git pull + cargo install。");
+                std::process::exit(1);
+            }
+        }
+        "model" => {
+            // 查看/切换当前模型（本地配置管理；与 `models`（远程列表）区分）。
+            let (base, key, cur_model) = ganyu_agent::config::read_model_config();
+            if let Some(new_model) = positional.iter().find(|a| !a.starts_with('-')) {
+                let base = base.unwrap_or_default();
+                let key = key.unwrap_or_default();
+                if base.is_empty() || key.is_empty() {
+                    eprintln!("未配置端点。先运行 ganyu setup 配置 base_url/api_key 后再切换模型。");
+                    std::process::exit(1);
+                }
+                ganyu_agent::config::write_model_config(&base, &key, new_model)?;
+                println!("✅ 当前模型已切换: {cur_model.unwrap_or_default()} → {new_model}");
+            } else {
+                let masked = key
+                    .as_deref()
+                    .map(|k| if k.len() > 8 { format!("{}…{}", &k[..4], &k[k.len() - 4..]) } else { "****".to_string() })
+                    .unwrap_or_else(|| "<未配置>".to_string());
+                println!("== 当前模型配置 ==");
+                println!("  base_url: {}", base.as_deref().unwrap_or("<未配置>"));
+                println!("  api_key : {masked}");
+                println!("  model   : {}", cur_model.as_deref().unwrap_or("<未配置>"));
+                println!("  切换: ganyu model <新模型id>   查看网关全部可用模型: ganyu models");
+            }
+        }
         "agent" => {
             let mode = mode_arg.clone().unwrap_or_else(|| "react".to_string());
             let query = positional.join(" ");
