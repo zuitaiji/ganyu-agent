@@ -34,6 +34,20 @@ cargo --features shell ─┐
 | `OPENAI_API_BASE` / `OPENAI_API_KEY` | 无 | OpenAI 兼容后端（network） |
 | `OPENAI_MODEL` | `gpt-4o-mini` | 模型 id（OpenAI 兼容端点；推理模型自动兼容 `reasoning_content`） |
 
+### 配置文件（一站式，对标 OpenClaw config.yaml）
+
+写一次 `~/.ganyu/config.toml`，之后 `ganyu-agent chat` 直接对话，无需 export：
+
+```toml
+[model]
+base_url = "https://apihub.agnes-ai.com/v1"
+api_key = "sk-..."
+model = "agnes-2.5-flash"
+```
+
+规则：路径优先级 `$GANYU_CONFIG` > `~/.ganyu/config.toml` > `./ganyu.toml`；
+**已设置的环境变量优先于文件**（CI/容器友好）。实现：`config::load_model_config()`。
+
 ## 3. 场景配置模板
 
 ### A. 最小离线（默认构建，最安全）
