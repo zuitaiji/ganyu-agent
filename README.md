@@ -1,141 +1,145 @@
 # ganyu-agent
 
-有温度、能自进化、可拓展、可自愈的完备 agent 系统（Rust 实现）。
+> 有温度、能自进化、可拓展、可自愈的**完备 Agent 系统**（Rust 实现）。
+> 会话 UUID 贯通 · 统一字符串值 · 抽象层驱动 · 默认离线可跑 · 安全失败闭环。
+
+ganyu-agent 是一个从零构建的个人级/团队级 Agent 框架：覆盖对话执行与知识分析两条主线，
+内置七大 agent 范式、ReAct 多步推理、自愈（重试/熔断/级联）、可生长技能，并在安全上
+采取「**默认拒绝、显式开启**」的失败闭环策略。
+
+## ✨ 特性
+
+| 领域 | 能力 |
+|------|------|
+| **多范式** | 单 agent · ReAct · Plan & Execute · 多 agent · Router · Blackboard · Graph（统一 `Unit`/`RunContext`/`Workflow` 抽象） |
+| **推理循环** | ReAct 感知→推理→行动→观察；可插拔 `Reasoner`；`@tool` 脚本与 JSON 原生函数调用（M6） |
+| **自愈** | 重试+指数退避 · 熔断器 · 多后端级联 fallback · lkgp 粘路径 · 限速（令牌桶） |
+| **记忆** | 5 层能力：会话轨迹（UUID 续接）· 语义检索（RAG 雏形）· 成功案例固化 · 失败沉淀 · 加密落盘（AES-256-GCM，可选） |
+| **知识/分析** | SAG 五步管道（意图→上下文→生成→校验→自进化）+ MDL 本地语义校验 + SQL 注入防护 |
+| **可拓展** | `tool!` 宏一行注册工具 · `plugins/*.json` 免重编译命令插件（白名单+校验） · `SkillBook` 可生长技能 |
+| **安全** | 文件沙箱（C3/C4）· SSRF 防护 · shell 双层开关 · 插件默认关闭 · 输出净化 · 审计日志 · 启动基线自检 |
+| **工程化** | 集中配置（`GANYU_*`）· LRU+TTL 缓存 · JSON Lines 审计 · 一键安装脚本 · 完整 ADR 决策记录 |
+| **离线优先** | 默认构建零网络依赖（`LocalBackend`/`LocalReasoner` 兜底）；`network` 特性按需接入真实模型 |
+
+## 🚀 快速开始
+
+前置：Rust/cargo（[rustup.rs](https://rustup.rs)）。
+
+```bash
+# 一条命令安装（Linux/macOS/Git-Bash）
+bash install.sh --features hardened
+# 或 Windows PowerShell
+.\install.ps1 -Features hardened
+
+# 或直接从源码构建
+cargo build --release --features hardened
+
+# 自检 + 首跑
+ganyu-agent selftest
+ganyu-agent run "你好"
+ganyu-agent sag "上月华东区利润最高的三个产品"
+```
+
+> 完整安装方式（`curl|sh` / `irm|iex` / cargo install / 特性矩阵 / 卸载）见 **[docs/install.md](docs/install.md)**。
+
+## 📖 使用
+
+```bash
+ganyu-agent selftest                          # 内置自检（9 项）
+ganyu-agent tools                             # 列出全部工具与特性技能
+ganyu-agent modes                             # 列出七大范式
+ganyu-agent run "@calc (1+2)*3"               # ReAct 推理循环（多步工具调用）
+ganyu-agent agent "任务" --mode multi         # 多范式编排
+ganyu-agent sag "上月华东区利润最高的三个产品"  # 知识分析（SAG）
+echo "@calc 2+3" | ganyu-agent chat           # 对话面
+```
+
+> 全部子命令与示例见 **[docs/usage.md](docs/usage.md)**。
+
+## 🏛 架构
+
+```
+接入层 ──→ 人格层(Pi-EQ SOUL) ──→ 推理循环 ReAct ──→ 路由层 Gateway(级联/熔断/lkgp/缓存/限速)
+                  │                        │                     │
+              Agent 编排 ────────── 工具层 ToolRegistry(内置/插件/技能) ──→ 记忆层 Memory
+                  │                                                        │
+             知识/分析面：SAG 管道 + MDL 校验             安全基件 security/ sandbox/
+                  │                                       工程基件 config/ cache/ observe/
+              自愈 heal：重试/熔断/级联/限速
+```
+
+- **统一抽象**：`Memory` / `LlmBackend` / `Tool` 三个 trait + `Gateway`(路由) + `Agent`(编排) + `heal`(自愈)；
+  所有范式构建在同一 `Unit` 原子之上，`Workflow` 是对 `Unit` 的协调策略。
+- **设计硬约束**：会话 UUID（`SessionId`）贯穿交互与记忆提交；统一字符串值（`Value(String)`）收敛全部载荷。
+- 详细架构、数据流与模块职责见 **[docs/architecture.md](docs/architecture.md)**。
+
+## 📁 目录结构
+
+```
+ganyu-agent/
+├── src/
+│   ├── main.rs / lib.rs      CLI 入口 / 库导出
+│   ├── value.rs / error.rs / session.rs   统一值 / 统一错误 / 会话 UUID
+│   ├── core/                抽象层与编排：llm / memory / agent / loop_(ReAct) / unit / workflow(7 范式)
+│   ├── ext/                 能力面：工具注册 / 插件发现 / 技能（tool! / CommandTool / SkillBook）
+│   ├── knowledge/           知识面：mdl(MDL 校验) / sag(SAG 管道)
+│   ├── heal/                自愈：重试 / 熔断 / 级联 / 限速
+│   ├── routing/             网关：级联 + lkgp + 熔断 + 缓存 + 审计
+│   ├── security/            安全执行面：文件沙箱 / SSRF / shell 开关 / 输出净化
+│   ├── sandbox.rs           进程级 FS 沙箱（Landlock，Linux-only）
+│   ├── config.rs            工程化配置面（GANYU_* 集中 + 基线自检）
+│   ├── cache.rs             缓存层（LRU+TTL）
+│   ├── observe.rs           审计日志（JSON Lines）
+│   └── persona/             人格层（Pi-EQ SOUL）
+├── docs/                    文档体系（ADR 决策记录 / 指南 / 索引）
+├── examples/                示例：sample_mdl.json / deploy-openviking.yml
+├── plugins/                 免重编译命令插件示例
+├── tests/                   集成测试（integration / workflows）
+├── install.sh / install.ps1 一键安装脚本
+├── SECURITY.md              安全治理基线
+└── Cargo.toml               特性矩阵（network/crypto/secret/shell/sandbox/hardened）
+```
+
+## 📚 文档导航
+
+| 文档 | 内容 |
+|------|------|
+| **[docs/README.md](docs/README.md)** | 文档总索引 + 代码地图 |
+| **[docs/install.md](docs/install.md)** | 安装指南（一键脚本 / cargo / 源码 + 特性矩阵 + 卸载） |
+| **[docs/usage.md](docs/usage.md)** | CLI 使用指南（全部子命令 + 示例） |
+| **[docs/architecture.md](docs/architecture.md)** | 架构概览（分层 / 数据流 / 模块职责 / 扩展点） |
+| **[docs/development.md](docs/development.md)** | 开发指南（构建 / 测试 / 特性 / 代码规范 / 贡献） |
+| **docs/ADR-001 ~ 007** | 架构决策记录（统一架构 / 多范式 / 安全审计 / 修复落地 / 工程化 / 安装分发） |
+| **[SECURITY.md](SECURITY.md)** | 安全治理基线（12 层防线 / env 清单 / 生产加固 / 漏洞报告） |
+
+## 🔒 安全
+
+默认姿态 = **失败闭环（fail-closed）**：默认不给任何能力，每一项都需显式开启。
+
+| 能力 | 默认 | 开启方式 |
+|------|------|----------|
+| `exec` 本地执行 | 关 | `shell` 特性 + `GANYU_ALLOW_SHELL=1` |
+| 插件发现 | 关 | `GANYU_ALLOW_PLUGINS=1` + `vetted:true` + 程序白名单 |
+| 文件 IO | 沙箱内（`.ganyu_workspace`） | 相对路径；拒绝穿越/绝对路径/符号链接逃逸 |
+| `web_fetch` | 仅 network 特性 | 自动 SSRF 防护（禁内网/环回/云元数据） |
+| 记忆落盘 | 明文 | `crypto` 特性 + `GANYU_MEM_KEY`（AES-256-GCM） |
+| 缓存/限速/审计 | 关 | `GANYU_TOOL_CACHE_TTL` / `GANYU_RATE_PER_MIN` / `GANYU_AUDIT` |
+
+> 完整防线、环境变量清单与生产加固组合见 **[SECURITY.md](SECURITY.md)**。
+
+## 🛠 开发
+
+```bash
+cargo build                     # 默认构建（零网络依赖）
+cargo build --features hardened # 生产加固组合（network+crypto+secret+shell）
+cargo test                      # 全量测试（单元 + 集成 + 工作流）
+cargo test --features crypto,secret   # 含记忆加密往返测试
+```
+
+> 特性矩阵、扩展方法（加工具/技能/后端）、代码规范与贡献流程见 **[docs/development.md](docs/development.md)**。
+
+## 📜 来源与致谢
 
 基于规划文档 `ganyu-agent.md` / `agent-fusion-architecture.md` / `model-routing-gateway-deploy.md`
-落地架构主干：**对话/执行面** + **知识/分析面**，由记忆层贯穿。
-
-## 设计硬约束（用户要求）
-
-| 约束 | 实现 |
-|---|---|
-| 会话 UUID | `SessionId(Uuid)`，贯穿 Agent / SAG / 记忆提交 |
-| 统一数据类型为 string | `Value(String)` newtype，全链路载荷收敛为字符串（`From<&str/i64/f64/bool>`） |
-| 抽象层 | `Memory` / `LlmBackend` / `Tool` 三个 trait + `Gateway`(路由) + `Agent`(编排) + `heal`(自愈) |
-| 全量发挥 Rust | `enum` / `trait`+`dyn` / 泛型 `with_retry<F,T,E>` / `Result`+`?`+thiserror / `macro`(`tool!`) / `async`+tokio / 所有权 `Arc`+`Mutex`+`Send+Sync`+`OnceLock` |
-
-## 架构
-
-```
-接入层 ──→ 人格层(Pi-EQ SOUL) ──→ 推理循环 loop(ReAct: 感知→推理→行动→观察) ──→ 路由层(Gateway)
-                 │                          │                                    │
-             Agent 编排 ──────────── 工具层(ToolRegistry / 插件 / 技能) ──→ 记忆层(Memory)
-                 │                                                              │
-            知识/分析面：SAG 五步管道(意图→上下文→生成→校验→自进化) + MDL 语义校验
-```
-
-- **统一 Unit 抽象（多范式基石）**：所有范式建立在同一个原子 `Unit`（`name` + `run(ctx,input)`）
-  之上；`RunContext` 共享会话 UUID / 黑板 / 记忆 / 网关 / 工具 / 技能。ReAct 是 `Unit` 的内部行为，
-  其余范式是对多个 `Unit` 的*协调策略*（`Workflow` trait，统一 `run(ctx,input)`）。
-- **七大范式全覆盖**（见下节 + `docs/ADR-002-multi-paradigm.md`）：单 agent、ReAct、Plan & Execute、
-  多 agent、Router、Blackboard、Graph Workflow。全部离线可跑，接真模型时同接口自动升级。
-- **全量 agent 工作流（ReAct）**：`core/loop` 把单条消息升级为多步「思考→行动→观察」循环，
-  由可插拔 `Reasoner` 驱动。`LocalReasoner` 离线解析 `@tool arg` 脚本 + 关键字路由到技能；
-  接真模型时由 `LlmReasoner` 取代即自动进入多步深思。失败的工具调用作为 Observation 回流（自愈）。
-- **自愈（heal）**：重试+指数退避、熔断器、多后端级联 fallback、lkgp 粘成功路径；
-  外部重服务（OpenViking / OmniRoute / 真 LLM）走适配器 + 本地降级，不可用时自动兜底。
-- **可拓展（ext）**：`tool!` 宏一行注册工具；`plugins/*.json` 清单把外部命令注册为工具（**无需重编译**）；
-  `Skill` 把多步程序固化为可生长的特性技能；成功路径经 `SkillBook` 固化（自进化），失败踪迹沉淀供规避。
-
-## 多范式 agent 框架
-
-统一抽象：`Unit`（原子运行时）+ `RunContext`（共享上下文）+ `Workflow`（协调策略）。
-
-| 范式 | CLI `--mode` | 协调语义 |
-|------|------|----------|
-| 单 agent | `single` | 直接跑一个 `Unit` |
-| ReAct | `react` | `Unit`=Agent，内部多步循环 |
-| Plan & Execute | `plan` | 规划器拆子任务 → 逐步执行 → 合成 |
-| 多 agent | `multi` | 多 `Unit` 按轮次传递上下文 |
-| Router | `router` | 分类器派发到专精 `Unit`，否则 fallback |
-| Blackboard | `blackboard` | 各 `Unit` 写共享黑板，合成器读整块黑板 |
-| Graph Workflow | `graph` | DAG 拓扑序执行，边传数据，构造即校验环 |
-
-默认离线：规划用 `LocalPlanner`（按连接词拆分）、路由用 `KeywordRouter`（关键字），
-无真模型时各范式输出本地兜底文本（机制已验证，语义需接模型才完整）。
-
-## 构建与运行
-
-```bash
-cargo build            # 默认：零网络依赖即可编译运行（LocalBackend 兜底）
-cargo test             # 28 个测试（单元 + 集成 + 工作流）
-
-# 可选：接入真实 LLM（OpenAI 兼容端点，指向 OmniRoute / Ollama 等）
-OPENAI_API_BASE=https://... OPENAI_API_KEY=sk-... cargo run --features network -- sag "..."
-
-# 可选：记忆层接 OpenViking（:1933）；不可达时自动降级本地存储
-OV_BASE=http://localhost:1933 cargo run -- sag "..."
-```
-
-### 子命令
-
-```bash
-cargo run -- run "@calc 2+3"                    # 跑完整 ReAct 推理循环（多步工具调用），打印轨迹与作答
-cargo run -- run "@file_write a.txt\nhi\n@calc 1+1"   # 多步脚本：逐行执行，最后一行收尾
-cargo run -- agent "任务" --mode plan          # 多范式：plan/react/multi/router/blackboard/graph/single
-cargo run -- modes                             # 列出全部支持的范式
-cargo run -- tools                             # 列出全部内置工具与特性技能
-cargo run -- skill summarize path/to/file      # 直接调用特性技能
-cargo run -- sag "上月华东区利润最高的三个产品"   # 跑 SAG 管道（默认 examples/sample_mdl.json）
-cargo run -- selftest                          # 内置自愈/可拓展自检（9 项）
-echo "@calc (1+2)*3" | cargo run -- chat       # 对话面（@name 分发；自然语言自动路由到技能；无模型时本地兜底）
-cargo run -- chat --session <uuid>             # 续接指定会话（记忆中存在则注入上次轨迹，跨重启自进化）
-```
-
-> `chat` / `run` / `sag` 都会打印 `session: <uuid>`，复制该 UUID 即可用 `--session` 续接。
-
-## 内置能力
-
-**工具（`@tool` 或 `@name` 调用）**：`echo` `calc` `file_read` `file_write` `file_list`
-`exec`（本机 shell）`remember` `recall` `rag_search`，以及 `web_fetch`（仅 `--features network`）。
-`plugins/*.json` 里的外部命令也会被自动 `discover` 注册（如示例 `upper`）。
-
-**特性技能（可生长，`skill:<name>` 调用，自然语言也能自动路由）**：
-- `summarize` — 读文件并给离线摘要（行数/字符数 + 前若干字符）
-- `troubleshoot` — 按报错/现象检索记忆中的成功案例与失败沉淀，给排查指引
-- `kb_query` — 向记忆知识库提问（检索 + 摘要）
-
-## 如何扩展
-
-1. **加工具（编译期）**：`reg.register(crate::tool!(my_tool, "描述", |i: &Value| -> GanyuResult<Value> { ... }));`
-2. **加工具（运行期，免重编译）**：在 `plugins/example.json` 加一个 `{name, command, description}`，
-   后端自动 `discover` 把外部命令注册为工具（stdin 收输入，stdout 作返回值）。
-3. **加特性技能（可生长）**：`book.register_skill(Skill { name, description, steps })`，
-   `steps` 是 `Call{tool,arg}` / `Note{text}` / `Summarize{max_chars}` 的组合，无需改核心代码。
-4. **接真实模型 / 记忆**：实现 `LlmBackend` / `Memory` trait，注册进 `Gateway` / `Agent` 即可，
-   默认 `LocalBackend` / `LocalMemory` 作为自愈兜底始终保留。
-
-## 近期深化（架构决策见 `docs/ADR-001-architecture.md`）
-
-- **会话 UUID 真正贯通记忆**：修复 `Memory::commit` 原先 `SessionId::new()` 造随机会话的缺陷，改为显式传入真实会话；
-  新增 `load_session` + `Agent::resume()`，支持 `--session <uuid>` 跨重启续接（自进化）。记忆层本身已文件持久化（`LocalMemory` 落盘 JSON，`SkillBook` 走它）。
-- **真实 LLM 后端错误分流**：`OpenAiBackend`（`--features network`）加 30s 超时、复用 client，
-  并把 5xx/408/429 映射为可重试的 `BackendUnavailable`、4xx 映射为致命的 `BackendError`，
-  与网关熔断 + Agent 重试协同（只对"可重试"类生效，避免放大故障）。新增 `BackendError` 错误变体。
-- **默认零网络依赖不变**：native 后端仍仅 `LocalBackend` 兜底；network 特性才引入 reqwest/TLS。
-
-## 多范式框架（架构决策见 `docs/ADR-002-multi-paradigm.md`）
-
-- 抽离 `Unit`（`name` + `run(ctx,input)`）+ `RunContext`（会话/黑板/记忆/网关/工具/技能共享）× `Workflow`
-  协调策略，使单 agent / ReAct / Plan&Execute / 多 agent / Router / Blackboard / Graph 七大范式共用一套原子，
-  零重复脚手架；`Agent` 实现 `Unit`（内部 ReAct，跑完写共享黑板 key=角色）。
-- 离线可跑：`LocalPlanner`（连接词拆分）/ `KeywordRouter`（关键字路由）兜底；接真模型只需换 planner/router/reasoner。
-- CLI：`agent "任务" --mode <...>` + `modes` 列举；28 个测试覆盖全部范式（含 Graph 环检测）。
-
-## 目录
-
-```
-src/
-  value.rs      统一字符串值 Value
-  error.rs      统一错误 GanyuError（thiserror）
-  session.rs    会话 UUID SessionId
-  heal/         自愈：重试 / 熔断 / 级联 fallback
-  core/         llm(模型后端) / memory / agent(编排) / loop_(ReAct 推理循环) / unit(Unit+RunContext) / workflow(七大范式)
-  routing/      Gateway：级联 + 熔断 + lkgp
-  ext/          Tool 抽象 / tool! 宏 / 命令插件 / SkillBook
-  persona/      Pi-EQ 人格 SOUL
-  knowledge/     mdl(MDL 校验) / sag(SAG 五步管道)
-examples/        sample_mdl.json / deploy-openviking.yml（来自原规划备份）
-plugins/         命令插件示例
-tests/           集成测试
-```
+落地；安全与工程化设计对标 2026 开源 agent（Pi / OpenClaw / Hermes / Prime 等，见 ADR-004/006）。
+本仓库为 MIT 许可的个人/团队自托管 Agent 框架。
