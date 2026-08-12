@@ -2,9 +2,18 @@
 
 > 面向用户。安装见 [install.md](install.md)，配置见 [config-guide.md](config-guide.md)。
 
-## 一站式开始（OpenClaw/Hermes 式）
+## 即开即用（三种入口）
 
-写一次配置文件，之后直接对话，无需任何环境变量：
+| 入口 | 操作 |
+|------|------|
+| **双击启动** | Windows：双击 `C:\Users\Administrator\.ganyu\start-ganyu.bat`，直接进入对话 |
+| **命令对话** | 新开终端：`ganyu-agent chat`（或 `ganyu-agent`，默认即 chat） |
+| **单次调用** | `ganyu-agent run "你好"` |
+
+首次使用只需两步：装好后写一次 `~/.ganyu/config.toml`（见下），之后以上任一入口即开即用；
+启动时会显示已连接模型名；配错或缺配置时 `ganyu-agent doctor` 直接指出问题。
+
+## 一站式配置（写一次，永久生效）
 
 ```toml
 # ~/.ganyu/config.toml
@@ -12,11 +21,6 @@
 base_url = "https://apihub.agnes-ai.com/v1"   # OpenAI 兼容端点
 api_key = "sk-..."                             # 你的 key
 model = "agnes-2.5-flash"                      # 模型 id
-```
-
-```bash
-ganyu-agent chat        # 交互式对话（REPL）：多轮同会话、上下文延续，/quit 或 Ctrl+C 退出
-ganyu-agent run "你好"   # 单次对话
 ```
 > 已设置的 `OPENAI_API_BASE/KEY/MODEL` 环境变量优先于配置文件（CI/容器友好）。
 
