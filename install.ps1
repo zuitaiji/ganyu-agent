@@ -1,77 +1,107 @@
 ﻿# ============================================================================
-# ganyu-agent 一键安装脚本（Windows PowerShell 5.1+）
+# ganyu-agent 一键安装脚本 v2（Windows PowerShell 5.1+）
 #
-# 用法：
-#   本地（仓库内）：      .\install.ps1 -Features hardened -Prefix "$HOME\.ganyu"
-#   一条命令（远程）：   iex (irm <install.ps1 直链>)
+# 用法（Hermes 式，一条命令）：
+#   iex (irm https://raw.githubusercontent.com/zuitaiji/ganyu-agent/main/install.ps1)
 #
-# 与 install.sh 相同的设计原则：默认零依赖构建、能力按需开启、独立 PREFIX、
-# 自带 selftest 自检与 PATH 提示、幂等升级不动数据。
+# 行为：
+#   - 默认【免编译】：从 GitHub Releases 下载预编译二进制（hardened 特性），
+#     装到独立目录 $Prefix（默认 ~/.ganyu），零 Rust 依赖，删目录即卸载。
+#   - 指定 -Features 时回退【源码编译】：本地有仓库用本地源码，否则 clone，
+#     适合要定制特性的开发者。
+#   - 幂等：重复执行覆盖升级二进制，不动 ~/.ganyu/config.toml 与记忆文件。
+#   - 自带 selftest 自检 + 别名 ganyu.exe + PATH 提示。
 # ============================================================================
 [CmdletBinding()]
 param(
-  [string]$Features = "",          # 特性组合，如 "hardened" / "network" / "crypto,secret"
+  [string]$Version = "latest",     # release 版本：latest 或 v0.1.0
   [string]$Prefix = "",            # 安装前缀，默认 $HOME\.ganyu
-  [string]$Repo = "https://github.com/zuitaiji/ganyu-agent.git",
+  [string]$Features = "",          # 指定后走 cargo 编译（如 "hardened"）
+  [string]$Repo = "https://github.com/zuitaiji/ganyu-agent",
   [string]$Branch = "main",
-  [switch]$Dev,                    # 用 dev profile 构建（快，未优化；验证/CI 用）
+  [switch]$Dev,                    # 源码编译时用 dev profile（快，未优化）
   [switch]$NoAlias
 )
 
 $ErrorActionPreference = "Stop"
-
 if (-not $Prefix) { $Prefix = Join-Path $HOME ".ganyu" }
 $binDir = Join-Path $Prefix "bin"
 $binPath = Join-Path $binDir "ganyu-agent.exe"
 
-# ---- 前置检查：cargo ----------------------------------------------------------
-$cargo = Get-Command cargo -ErrorAction SilentlyContinue
-if (-not $cargo) {
-  Write-Host "[install] 未检测到 cargo。请先安装 Rust（rustup）：" -ForegroundColor Yellow
-  Write-Host "          在 https://rustup.rs 下载 rustup-init.exe 并安装。"
-  Write-Host "          然后重新打开终端重试。"
-  exit 1
+# ---- 平台检测 → release 资产名 ----------------------------------------------
+function Get-AssetName {
+  $arch = $env:PROCESSOR_ARCHITECTURE
+  if ($arch -eq "ARM64") {
+    return "ganyu-agent-windows-arm64.zip"
+  }
+  return "ganyu-agent-windows-x86_64.zip"
 }
 
-# ---- 定位源码 ---------------------------------------------------------------
-$src = $PSScriptRoot
-$isRepo = (Test-Path (Join-Path $src "Cargo.toml")) -and (Test-Path (Join-Path $src "src\main.rs"))
-if (-not $isRepo) {
-  $tmp = Join-Path ([IO.Path]::GetTempPath()) "ganyu-agent-src"
-  if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }
-  Write-Host "[install] 克隆 $Repo@$Branch ..."
-  git clone --depth 1 --branch $Branch $Repo $tmp | Out-Null
-  if ($LASTEXITCODE -ne 0) { Write-Error "git clone 失败"; exit 1 }
-  $src = $tmp
+# ---- 路径一：免编译下载（默认） ----------------------------------------------
+if (-not $Features) {
+  $asset = Get-AssetName
+  Write-Host "[install] 免编译安装（下载预编译 hardened 二进制）..."
+  Write-Host "[install]   release: $Version / asset: $asset"
+
+  # 解析 release 资产下载地址（公开仓库，无需 token）
+  $apiUrl = "https://api.github.com/repos/zuitaiji/ganyu-agent/releases/$Version"
+  $release = Invoke-RestMethod -Uri $apiUrl -Headers @{ "User-Agent" = "ganyu-install" }
+  $assetObj = $release.assets | Where-Object { $_.name -eq $asset }
+  if (-not $assetObj) {
+    $avail = ($release.assets | ForEach-Object { $_.name }) -join ", "
+    Write-Error "release $Version 中未找到资产 $asset。可用资产: $avail"
+  }
+  $downloadUrl = $assetObj.browser_download_url
+
+  New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+  $zipPath = Join-Path ([IO.Path]::GetTempPath()) $asset
+  Write-Host "[install] 下载 $downloadUrl"
+  Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
+  Expand-Archive -Path $zipPath -DestinationPath $binDir -Force
+  Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+
+  # 资产内可能直接是 exe（zip 内为 ganyu-agent.exe）；兜底处理
+  if (-not (Test-Path $binPath)) {
+    $inner = Get-ChildItem -Path $binDir -Filter "ganyu-agent*" -File | Select-Object -First 1
+    if ($inner) { Copy-Item $inner.FullName $binPath -Force }
+  }
+  if (-not (Test-Path $binPath)) { Write-Error "安装失败：$binPath 不存在" }
 }
-
-# ---- 构建并安装 -------------------------------------------------------------
-$featArgs = @()
-if ($Features) { $featArgs = @("--features", $Features) }
-if ($Dev) { $featArgs += "--debug" }
-$featLabel = if ($Features) { $Features } else { "<default>" }
-Write-Host "[install] cargo install --path '$src' --root '$Prefix' --features '$featLabel' $(if ($Dev) {'[dev profile]'} else {'[release]'})"
-
-# 构建目录：默认持久缓存在 $Prefix\target（幂等升级时增量编译），
-# 可用环境变量 GANYU_CARGO_TARGET_DIR 覆盖（如 CI 指定缓存目录）。
-if (-not $env:GANYU_CARGO_TARGET_DIR) {
-  $env:GANYU_CARGO_TARGET_DIR = Join-Path $Prefix "target"
+else {
+  # ---- 路径二：源码编译（指定 -Features） ------------------------------------
+  $cargo = Get-Command cargo -ErrorAction SilentlyContinue
+  if (-not $cargo) {
+    Write-Host "[install] 未检测到 cargo。免编译安装无需 cargo；" -ForegroundColor Yellow
+    Write-Host "          如需 -Features 定制编译，请先安装 Rust：https://rustup.rs" -ForegroundColor Yellow
+    exit 1
+  }
+  $src = $PSScriptRoot
+  $isRepo = (Test-Path (Join-Path $src "Cargo.toml")) -and (Test-Path (Join-Path $src "src\main.rs"))
+  if (-not $isRepo) {
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) "ganyu-agent-src"
+    if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    Write-Host "[install] 克隆 $Repo@$Branch ..."
+    git clone --depth 1 --branch $Branch "$Repo.git" $tmp | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Error "git clone 失败"; exit 1 }
+    $src = $tmp
+  }
+  $featArgs = @("--features", $Features)
+  if ($Dev) { $featArgs += "--debug" }
+  if (-not $env:GANYU_CARGO_TARGET_DIR) {
+    $env:GANYU_CARGO_TARGET_DIR = Join-Path $Prefix "target"
+  }
+  New-Item -ItemType Directory -Path $env:GANYU_CARGO_TARGET_DIR -Force | Out-Null
+  Write-Host "[install] cargo install --path '$src' --root '$Prefix' $(if ($Dev) {'[dev]'} else {'[release]'})"
+  & cargo install --path $src --root $Prefix --locked @featArgs
+  if ($LASTEXITCODE -ne 0) { Write-Error "cargo install 失败"; exit 1 }
 }
-New-Item -ItemType Directory -Path $env:GANYU_CARGO_TARGET_DIR -Force | Out-Null
-
-& cargo install --path $src --root $Prefix --locked @featArgs
-if ($LASTEXITCODE -ne 0) { Write-Error "cargo install 失败"; exit 1 }
 
 # ---- 自检 --------------------------------------------------------------------
-# selftest 依赖仓库内 examples/sample_mdl.json，需切到源码目录执行；
-# 且 native 命令非零退出不应被 $ErrorActionPreference=Stop 当作致命错误。
 Write-Host "[install] 自检: $binPath selftest"
 $prevEAP = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-Push-Location $src
 & $binPath selftest 2>&1 | Out-Null
 $selftestExit = $LASTEXITCODE
-Pop-Location
 $ErrorActionPreference = $prevEAP
 if ($selftestExit -eq 0) {
   Write-Host "[install] selftest 通过" -ForegroundColor Green
@@ -98,12 +128,9 @@ if (-not $inPath) {
 Write-Host ""
 Write-Host "[install] 安装完成。快速体验：" -ForegroundColor Green
 Write-Host "          ganyu-agent selftest"
-Write-Host "          ganyu-agent tools"
 Write-Host "          ganyu-agent doctor"
-Write-Host "          开箱即用（配置模型）：编辑 ~/.ganyu/config.toml，写入"
-Write-Host '            [model]'
-Write-Host '            base_url = "https://api.openai.com/v1"'
-Write-Host '            api_key = "sk-..."'
-Write-Host '            model = "你的模型id"'
-Write-Host "          然后直接对话：ganyu-agent chat"
-Write-Host "          生产建议: 重新安装并加 -Features hardened（记忆加密/限速/审计）"
+Write-Host "          配置模型（交互式向导，推荐）：ganyu-agent setup"
+Write-Host "          直接对话：ganyu-agent chat   （或 ganyu）"
+Write-Host "          升级：ganyu-agent update"
+Write-Host "          查看/切换模型：ganyu-agent model"
+Write-Host "          接 Telegram：ganyu-agent gateway start"

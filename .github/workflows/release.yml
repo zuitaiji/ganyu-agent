@@ -1,0 +1,71 @@
+# ganyu-agent Release 构建：tag 推送 → 三平台 release 二进制 → GitHub Release
+# 用法：git tag v0.1.0 && git push origin v0.1.0
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: # 手动触发（测试用）
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: ganyu-agent-windows-x86_64.zip
+            archive: powershell Compress-Archive -Path target/release/ganyu-agent.exe -DestinationPath "$env:RUNNER_TEMP/ganyu-agent-windows-x86_64.zip" -Force
+          - os: ubuntu-latest
+            artifact: ganyu-agent-linux-x86_64.tar.gz
+            archive: tar -czf "$RUNNER_TEMP/ganyu-agent-linux-x86_64.tar.gz" -C target/release ganyu-agent
+          - os: macos-latest
+            artifact: ganyu-agent-macos-arm64.tar.gz
+            archive: tar -czf "$RUNNER_TEMP/ganyu-agent-macos-arm64.tar.gz" -C target/release ganyu-agent
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (hardened)
+        run: cargo build --release --features hardened --locked
+
+      - name: Smoke test
+        run: |
+          target/release/ganyu-agent tools
+          target/release/ganyu-agent doctor
+
+      - name: Archive
+        shell: bash
+        run: ${{ matrix.archive }}
+
+      - name: Upload asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*/*
+          generate_release_notes: true
+          draft: false
