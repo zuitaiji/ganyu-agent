@@ -286,6 +286,36 @@ async fn main() -> GanyuResult<()> {
                 }
             );
         }
+        "models" => {
+            // 查询 OpenAI 兼容网关的可用模型列表（GET /v1/models）。
+            #[cfg(feature = "network")]
+            {
+                let base = std::env::var("OPENAI_API_BASE").unwrap_or_default();
+                let key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+                if base.is_empty() || key.is_empty() {
+                    eprintln!("未配置模型端点：编辑 ~/.ganyu/config.toml 的 [model] 段，或运行 doctor 查看。");
+                    std::process::exit(1);
+                }
+                let backend = OpenAiBackend::new(&base, &key, "models-probe");
+                match backend.list_models().await {
+                    Ok(list) => {
+                        println!("== 可用模型（{} 个）==", list.len());
+                        for m in list {
+                            println!("  {m}");
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("查询失败: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            #[cfg(not(feature = "network"))]
+            {
+                eprintln!("当前构建无 network 特性，无法查询模型列表。请用 --features network/hardened 编译。");
+                std::process::exit(1);
+            }
+        }
         "agent" => {
             let mode = mode_arg.clone().unwrap_or_else(|| "react".to_string());
             let query = positional.join(" ");

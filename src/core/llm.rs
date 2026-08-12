@@ -121,6 +121,38 @@ impl OpenAiBackend {
             name: format!("openai:{model}"),
         }
     }
+
+    /// 查询 OpenAI 兼容网关的可用模型列表（`GET {base}/models`）。
+    pub async fn list_models(&self) -> GanyuResult<Vec<String>> {
+        let resp = self
+            .client
+            .get(format!("{}/models", self.base_url))
+            .bearer_auth(self.api_key.as_str())
+            .send()
+            .await
+            .map_err(|e| GanyuError::BackendUnavailable(format!("network: {e}")))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let detail = resp.text().await.unwrap_or_default();
+            if status.is_server_error() || status == 408 || status == 429 {
+                return Err(GanyuError::BackendUnavailable(format!("{status} {detail}")));
+            }
+            return Err(GanyuError::BackendError(format!("{status} {detail}")));
+        }
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| GanyuError::Http(e.to_string()))?;
+        let ids = json["data"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(ids)
+    }
 }
 
 #[cfg(feature = "network")]
