@@ -43,7 +43,9 @@ jobs:
 
       - name: Archive
         shell: bash
-        run: tar -czf "$RUNNER_TEMP/${{ matrix.artifact }}" -C target/release ganyu-agent
+        run: |
+          if command -v cygpath >/dev/null 2>&1; then TMP="$(cygpath -u "$RUNNER_TEMP")"; else TMP="$RUNNER_TEMP"; fi
+          tar -czf "$TMP/${{ matrix.artifact }}" -C target/release ganyu-agent
 
       - name: Upload asset
         uses: actions/upload-artifact@v4
