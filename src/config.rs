@@ -73,6 +73,48 @@ pub fn write_model_config(base_url: &str, api_key: &str, model: &str) -> crate::
     Ok(())
 }
 
+/// 读取 [gateway] 段的 Telegram bot token（`ganyu gateway start` 用）。
+pub fn read_gateway_token() -> Option<String> {
+    let path = config_path()?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    #[derive(serde::Deserialize)]
+    struct FileCfg {
+        #[serde(default)]
+        gateway: Option<GatewayCfg>,
+    }
+    #[derive(serde::Deserialize)]
+    struct GatewayCfg {
+        telegram_token: Option<String>,
+    }
+    let parsed = toml::from_str::<FileCfg>(&text).ok()?;
+    parsed.gateway?.telegram_token
+}
+
+/// 写入 [gateway] 段（`ganyu gateway setup` 用）。保留其他段。
+pub fn write_gateway_token(token: &str) -> crate::GanyuResult<()> {
+    let path = config_path().ok_or_else(|| {
+        GanyuError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "无法确定配置文件路径（GANYU_CONFIG/USERPROFILE/HOME 均未设置）",
+        ))
+    })?;
+    let mut value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
+        .unwrap_or_else(|| toml::Value::Table(Default::default()));
+    let mut gw_tbl = toml::map::Map::new();
+    gw_tbl.insert("telegram_token".to_string(), toml::Value::String(token.to_string()));
+    if let toml::Value::Table(map) = &mut value {
+        map.insert("gateway".to_string(), toml::Value::Table(gw_tbl));
+    }
+    if let Some(parent) = Path::new(&path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let text = toml::to_string_pretty(&value).map_err(|e| GanyuError::Toml(e.to_string()))?;
+    std::fs::write(&path, text)?;
+    Ok(())
+}
+
 /// 全部 `GANYU_*` 环境变量及其含义（文档面，供 README/SECURITY 引用）。
 pub const ENV_DOCS: &[(&str, &str)] = &[
     ("GANYU_FS_ROOT", "文件沙箱根目录（默认 .ganyu_workspace）"),
