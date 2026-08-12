@@ -168,6 +168,8 @@ pub fn ssrf_guard(url: &str) -> GanyuResult<()> {
     if candidates.is_empty() {
         return Err(GanyuError::Ssrf(format!("主机无可用地址：{host}")));
     }
+    // 字面 IP（用户直接写 IP）→ 一律按严格规则拒绝内网/保留段（无代理可绕过语义）。
+    let literal_ip = host.parse::<IpAddr>().is_ok();
     for addr in &candidates {
         let ip: IpAddr = match addr.parse() {
             Ok(ip) => ip,
@@ -176,13 +178,34 @@ pub fn ssrf_guard(url: &str) -> GanyuResult<()> {
                 return Err(GanyuError::Ssrf(format!("地址解析异常：{addr}")));
             }
         };
-        if is_private_or_reserved(ip) {
+        if literal_ip && is_private_or_reserved(ip) {
+            return Err(GanyuError::Ssrf(format!(
+                "拒绝字面内网/保留地址 {ip}（来自主机 {host}）"
+            )));
+        }
+        // 代理 fake-ip 豁免：Clash 等代理把域名解析为 198.18.0.0/15 虚拟地址，
+        // 连接实际经代理转发——该网段不视为内网攻击面，否则外网抓取全被误拦。
+        if is_private_or_reserved(ip) && !is_fake_ip(ip) {
             return Err(GanyuError::Ssrf(format!(
                 "拒绝内网/保留地址 {ip}（来自主机 {host}）"
             )));
         }
     }
     Ok(())
+}
+
+/// 代理 fake-ip 虚拟地址段：IPv4 198.18.0.0/15、IPv6 fdfe:dcba:9876::/48（Clash 默认虚拟前缀）。
+fn is_fake_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v) => {
+            let o = v.octets();
+            o[0] == 198 && o[1] == 18
+        }
+        IpAddr::V6(v) => {
+            let s = v.segments();
+            s[0] == 0xfdfe && s[1] == 0xdcba && s[2] == 0x9876
+        }
+    }
 }
 
 /// M5：模型输出净化（信任边界处执行）。

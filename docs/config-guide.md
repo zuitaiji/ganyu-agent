@@ -100,7 +100,10 @@ docker run --rm -it \
 ## 5. 常见问题
 
 - **为什么不是 config.toml？** 保持零依赖与离线优先；env 是单一来源（ADR-006 已记录，
-  config.toml 文件化为后续迭代项，Pi 式「配置即文件」）。
+  config.toml 文件化为后续迭代项，Pi 式「配置即文件」）。现已支持 `~/.ganyu/config.toml`（见 §2.5）。
 - **密钥安全**：`GANYU_MEM_KEY`/`OPENAI_API_KEY` 勿写入仓库；生产从密钥管理器注入，
   `secret` 特性下 API key 内存清零（L1）。
 - **改了 env 要重启吗？** 配置在启动时读取一次；网关后端可运行时 `hot_reload`（network）。
+- **`web_fetch` 抓取报 Ssrf / 外网"不能联网"？** Clash 类代理用 fake-ip（198.18.0.0/15、
+  fdfe:dcba:9876::/48）解析域名——SSRF 防护已豁免该网段（连接经代理转发）；若仍失败：
+  确认代理在运行（`HTTPS_PROXY` env 或系统代理），`ganyu-agent doctor` 查看配置。

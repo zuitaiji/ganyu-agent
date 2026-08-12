@@ -24,7 +24,7 @@
 | 2 | 工具门控 | `Tool::side_effecting`：副作用不缓存、不盲目重试（M3） |
 | 3 | 文件沙箱 | `resolve_sandboxed`：路径规范化 + 根内校验（C3/C4） |
 | 4 | 进程沙箱 | `sandbox` 特性 Landlock（Linux，exec 子进程内施加） |
-| 5 | SSRF 防护 | 协议/域名/IP 四重校验；禁 169.254.169.254 等（C5） |
+| 5 | SSRF 防护 | 协议/域名/IP 四重校验；禁 169.254.169.254 等（C5）。**代理 fake-ip 豁免**：Clash 等代理把域名解析为 198.18.0.0/15 / fdfe:dcba:9876::/48 虚拟地址，该网段放行（连接经代理转发）；字面内网 IP 仍一律拒绝 |
 | 6 | SQL 注入防护 | `Mdl::detect_injection` + 白名单模板构造（H2） |
 | 7 | 记忆加密 | AES-256-GCM（crypto，H1） |
 | 8 | 密钥保护 | `zeroize::Zeroizing`（secret，L1） |
