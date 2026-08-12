@@ -79,6 +79,16 @@ impl Gateway {
         self.backends.lock().unwrap().push(backend);
     }
 
+    /// 已注册后端名称（诊断/doctor 用）。
+    pub fn names(&self) -> Vec<String> {
+        self.backends
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|b| b.name().to_string())
+            .collect()
+    }
+
     /// lkgp：把上次成功的后端排到最前；本地兜底（local）永远排最后（真模型优先）。
     fn ordered_names(&self) -> Vec<String> {
         let backends = self.backends.lock().unwrap();

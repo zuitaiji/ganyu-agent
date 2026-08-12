@@ -40,7 +40,26 @@ cargo test
 ./target/release/ganyu-agent selftest
 ```
 
-## 4. 特性矩阵
+## 4. 开箱即用（装完就能对话）
+
+```bash
+# 1. 自检与诊断
+ganyu-agent selftest
+ganyu-agent doctor          # 环境/配置/网关/能力面一键体检
+
+# 2. 写一次配置文件（OpenAI 兼容端点均可）
+#    ~/.ganyu/config.toml
+#    [model]
+#    base_url = "https://api.openai.com/v1"
+#    api_key = "sk-..."
+#    model = "你的模型id"
+
+# 3. 直接对话（交互式 REPL，多轮上下文延续；/quit 或 Ctrl+C 退出）
+ganyu-agent chat
+```
+> 配置后 `run`/`agent`/`sag` 也自动走真实模型；未配置则离线本地兜底（功能不缺失）。
+
+## 5. 特性矩阵
 
 | 特性 | 能力 | 代价 |
 |------|------|------|
@@ -52,7 +71,7 @@ cargo test
 | `sandbox` | Landlock（仅 Linux） | landlock |
 | `hardened` | 以上除 sandbox 的全部 | 构建最久 |
 
-## 5. 卸载
+## 6. 卸载
 
 ```bash
 rm -f "$HOME/.local/bin/ganyu-agent" "$HOME/.local/bin/ganyu"        # sh
@@ -60,7 +79,7 @@ Remove-Item "$HOME\.ganyu\bin\ganyu-agent.exe", "$HOME\.ganyu\bin\ganyu.exe" -Fo
 ```
 > 数据（记忆文件、沙箱根）保留在工作目录，卸载不影响。
 
-## 6. FAQ
+## 7. FAQ
 
 | 问题 | 处理 |
 |------|------|

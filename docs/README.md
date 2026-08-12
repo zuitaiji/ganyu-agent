@@ -24,6 +24,7 @@
 | [ADR-005](ADR-005-remediation-plan.md) | P0–P3 修复（失败闭环） |
 | [ADR-006](ADR-006-structure-engineering-cache.md) | 工程化/缓存/审计/配置 |
 | [ADR-007](ADR-007-install-distribution.md) | 安装与分发 |
+| [ADR-008](ADR-008-out-of-box.md) | 开箱即用（配置文件/REPL/doctor/模型接入） |
 
 ## 安全
 - [SECURITY.md](../SECURITY.md) — 12 层防线对照表 + 部署建议 + 漏洞报告

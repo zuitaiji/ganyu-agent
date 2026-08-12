@@ -1,15 +1,16 @@
 # ganyu-agent
 
-> 有温度、能自进化、可拓展、可自愈的**完备 Agent 系统**（Rust）。
-> 会话 UUID · 统一字符串值 · 抽象层 · 默认离线 · 安全失败闭环。
+> 有温度、能自进化、可拓展、可自愈的**完备 Agent 系统**（Rust），**开箱即用**。
+> 写一次配置文件 → `ganyu-agent chat` 直接对话（OpenClaw/Hermes 式体验）。
 > 范式对标：Pi（极简 harness）× OpenClaw（执行网关）× Hermes（防护+闭环）× Prime（诚实边界）。
 
 ## 特性
 
 | 领域 | 能力 |
 |------|------|
+| **开箱即用** | `~/.ganyu/config.toml` 一键配模型 → 交互式 REPL 对话；`doctor` 环境诊断；安装脚本引导 |
 | 多范式 | single / react / plan / multi / router / blackboard / graph（统一 `Unit`×`Workflow`） |
-| 推理 | ReAct 循环；`@tool` 脚本 + JSON 原生函数调用 |
+| 推理 | ReAct 循环；`LlmReasoner` 接真模型（`@tool` 自动行动）；`@tool` 脚本 + JSON 原生函数调用 |
 | 自愈 | 重试+退避 · 熔断 · 级联 · lkgp · 限速 |
 | 记忆 | 会话 UUID 轨迹续接 · 检索 · 案例固化/失败沉淀（自进化）· AES-256-GCM 加密（可选） |
 | 知识 | SAG 五步管道 + MDL 校验 + SQL 注入防护 |
@@ -18,31 +19,41 @@
 | 工程化 | 集中配置 · LRU+TTL 缓存 · JSON 审计 · 一键安装 · ADR 决策记录 |
 | 离线优先 | 默认零网络依赖；`network` 特性接真模型 |
 
-## 快速开始
+## 快速开始（开箱即用）
 
 ```bash
-# 安装（详见 docs/install.md）
+# 1. 安装（详见 docs/install.md）
 bash install.sh --features hardened        # Linux/macOS/Git-Bash
 .\install.ps1 -Features hardened           # Windows
-# 自检 + 首跑
-ganyu-agent selftest
-ganyu-agent run "你好"
-ganyu-agent sag "上月华东区利润最高的三个产品"
+
+# 2. 写一次配置文件（OpenAI 兼容端点均可）
+#    ~/.ganyu/config.toml
+#    [model]
+#    base_url = "https://api.openai.com/v1"
+#    api_key = "sk-..."
+#    model = "你的模型id"
+
+# 3. 直接对话（交互式 REPL，多轮上下文延续；/quit 或 Ctrl+C 退出）
+ganyu-agent chat
 ```
+
+> 模型已配置时 `run`/`agent`/`sag` 自动走真实模型；未配置则离线本地兜底，功能照常。
 
 ## 使用速查
 
 ```bash
-ganyu-agent tools | modes                  # 工具 / 范式
-ganyu-agent run "@calc (1+2)*3"            # ReAct
-ganyu-agent agent "任务" --mode multi      # 多范式
-ganyu-agent skill summarize path           # 技能
+ganyu-agent chat                 # 交互式对话（推荐入口）
+ganyu-agent doctor               # 环境诊断（配置/特性/网关/能力面）
+ganyu-agent run "你好"            # 单次对话
+ganyu-agent run "@calc (1+2)*3"  # 工具（离线可用）
+ganyu-agent agent "任务" --mode multi   # 多范式
+ganyu-agent tools | modes | selftest    # 工具/范式/自检
 ```
 
 ## 架构（详见 docs/architecture.md）
 
 ```
-CLI → Agent(ReAct) / Workflow(7范式) → ToolRegistry → Memory → Gateway → LlmBackend
+CLI → Agent(ReAct, LlmReasoner) / Workflow(7范式) → ToolRegistry → Memory → Gateway → LlmBackend
          └──────── SAG + MDL（知识面）────────┘  横切：heal·security·sandbox·config·cache·observe
 ```
 
@@ -51,7 +62,7 @@ CLI → Agent(ReAct) / Workflow(7范式) → ToolRegistry → Memory → Gateway
 ```
 src/     core(抽象编排) ext(能力) knowledge(知识) heal(自愈) routing(网关)
          security.rs sandbox.rs config.rs cache.rs observe.rs persona/
-docs/    指南 + ADR-001~007（见总索引）
+docs/    指南 + ADR-001~008（见总索引）
 examples/  sample_mdl.json · deploy-openviking.yml
 plugins/  命令插件示例
 install.sh / install.ps1 · SECURITY.md · Cargo.toml（特性矩阵）
@@ -62,13 +73,13 @@ install.sh / install.ps1 · SECURITY.md · Cargo.toml（特性矩阵）
 | 文档 | 内容 |
 |------|------|
 | [docs/README.md](docs/README.md) | 文档总索引 + 代码地图 |
-| [docs/install.md](docs/install.md) | 安装（脚本/cargo/源码 + 特性矩阵） |
-| [docs/config-guide.md](docs/config-guide.md) | **配置模型指导**（env 全量 + 场景模板） |
-| [docs/usage.md](docs/usage.md) | CLI 使用 |
+| [docs/install.md](docs/install.md) | 安装（脚本/cargo/源码 + 特性矩阵 + 开箱引导） |
+| [docs/config-guide.md](docs/config-guide.md) | **配置模型指导**（env 全量 + 配置文件 + 场景模板） |
+| [docs/usage.md](docs/usage.md) | CLI 使用（REPL / doctor / 全部子命令） |
 | [docs/architecture.md](docs/architecture.md) | 架构（对标范式） |
 | [docs/development.md](docs/development.md) | 开发/扩展/贡献 |
 | [SECURITY.md](SECURITY.md) | 安全基线（12 层防线） |
-| docs/ADR-001~007 | 架构决策记录 |
+| docs/ADR-001~008 | 架构决策记录 |
 
 ## 安全一句话
 

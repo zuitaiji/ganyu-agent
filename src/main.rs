@@ -224,6 +224,68 @@ async fn main() -> GanyuResult<()> {
                 println!("  {m:11} - {desc}");
             }
         }
+        "doctor" => {
+            // 环境/配置诊断（对标 OpenClaw 开箱自检）：快速定位「为什么没接上模型」。
+            println!("== ganyu-agent 环境诊断 ==");
+            println!(
+                "编译特性 : network={} crypto={} secret={} shell={} sandbox={}",
+                cfg!(feature = "network"),
+                cfg!(feature = "crypto"),
+                cfg!(feature = "secret"),
+                cfg!(feature = "shell"),
+                cfg!(feature = "sandbox"),
+            );
+            let cfg_path = std::env::var("GANYU_CONFIG")
+                .ok()
+                .or_else(|| {
+                    std::env::var("USERPROFILE")
+                        .or_else(|_| std::env::var("HOME"))
+                        .ok()
+                        .map(|h| format!("{h}/.ganyu/config.toml"))
+                })
+                .unwrap_or_else(|| "ganyu.toml".to_string());
+            println!(
+                "配置文件 : {cfg_path} [{}]",
+                if std::path::Path::new(&cfg_path).exists() {
+                    "存在"
+                } else {
+                    "缺失（可写 [model] 段一键接入模型）"
+                }
+            );
+            let base = std::env::var("OPENAI_API_BASE").unwrap_or_default();
+            let key_set = std::env::var("OPENAI_API_KEY").is_ok();
+            let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini(默认)".into());
+            println!(
+                "模型配置 : base={} key={} model={}",
+                if base.is_empty() { "(未设置)" } else { &base },
+                if key_set { "已设置" } else { "未设置" },
+                model,
+            );
+            println!("网关后端 : {}", agent.gateway.names().join(", "));
+            println!(
+                "能力面   : 工具 {} 个；技能 {} 个",
+                tools.names().len(),
+                skills.skill_names().len()
+            );
+            let mem_ok = std::path::Path::new(".ganyu_memory.json").exists();
+            println!(
+                "记忆文件 : .ganyu_memory.json [{}]",
+                if mem_ok { "存在" } else { "尚未创建" }
+            );
+            let model_ready = cfg!(feature = "network")
+                && !base.is_empty()
+                && key_set;
+            println!(
+                "状态     : {}",
+                if model_ready {
+                    "✅ 模型已配置，直接 ganyu-agent chat 即可对话"
+                } else if cfg!(feature = "network") {
+                    "⚠️ 未配置模型：编辑上面的 config.toml（[model] base_url/api_key/model）后即可对话"
+                } else {
+                    "⚠️ 当前构建无 network 特性（离线模式）；用 --features hardened 编译以接入模型"
+                }
+            );
+        }
         "agent" => {
             let mode = mode_arg.clone().unwrap_or_else(|| "react".to_string());
             let query = positional.join(" ");

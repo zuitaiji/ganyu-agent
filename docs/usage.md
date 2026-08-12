@@ -35,6 +35,7 @@ ganyu-agent run "你好"   # 单次对话
 | `sag "问题"` | 知识分析（默认 `examples/sample_mdl.json`） |
 | `skill <名> <参数>` | 直接调用技能（summarize/troubleshoot/kb_query） |
 | `selftest` / `tools` / `modes` | 自检 / 列工具 / 列范式 |
+| `doctor` | 环境诊断：编译特性 / 配置文件 / 模型配置 / 网关后端 / 能力面 |
 
 ## 示例
 

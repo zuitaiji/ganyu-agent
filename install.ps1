@@ -99,4 +99,11 @@ Write-Host ""
 Write-Host "[install] 安装完成。快速体验：" -ForegroundColor Green
 Write-Host "          ganyu-agent selftest"
 Write-Host "          ganyu-agent tools"
+Write-Host "          ganyu-agent doctor"
+Write-Host "          开箱即用（配置模型）：编辑 ~/.ganyu/config.toml，写入"
+Write-Host '            [model]'
+Write-Host '            base_url = "https://api.openai.com/v1"'
+Write-Host '            api_key = "sk-..."'
+Write-Host '            model = "你的模型id"'
+Write-Host "          然后直接对话：ganyu-agent chat"
 Write-Host "          生产建议: 重新安装并加 -Features hardened（记忆加密/限速/审计）"

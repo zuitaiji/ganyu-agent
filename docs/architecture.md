@@ -46,10 +46,10 @@
 | `Memory` | URI→值；会话轨迹 | `LocalMemory`（可加密） | 实现 trait |
 | `LlmBackend` | 对话补全 | `LocalBackend`（离线兜底） | `OpenAiBackend`（network） |
 | `Tool` | 原子能力 | 内置 10+ | `tool!` / 插件 |
-| `Reasoner` | 单步决策 | `LocalReasoner` | 接模型替换 |
+| `Reasoner` | 单步决策（async） | `LocalReasoner`（离线）/ `LlmReasoner`（配置模型自动启用） | 实现 trait |
 | `Unit` | 可编排原子 | `Agent` | 任意 Unit |
 | `Workflow` | 协调策略 | 7 范式 | 新范式实现 trait |
-| `Gateway` | 后端路由 | 级联+熔断+lkgp | register/hot_reload |
+| `Gateway` | 后端路由 | 级联+熔断+lkgp（**本地兜底永远排最后**） | register/hot_reload |
 
 ## 5. 模块职责速查
 
