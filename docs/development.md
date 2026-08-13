@@ -54,6 +54,23 @@ LLM 缓存吸收重复调用、SQL 注入检测、加密落盘密文且错密钥
 - 架构取舍先写 ADR（Context/Decision/Consequences）再动代码。
 - 提交前：`cargo test`（相关特性）+ `cargo build --features hardened` 无新增 warning。
 
+## 发布流程（CI + tag，即用即发）
+
+```bash
+# 1. 改代码 → 本地测试 → 提交推送
+git push origin main
+# 2. 手动触发 CI 编译验证（release job 无 tag 会失败，属预期）
+gh workflow run release.yml
+# 3. 编译全绿后打 tag → 正式发布（自动构建三平台二进制 + GitHub Release）
+git tag v0.1.1 && git push origin v0.1.1
+```
+
+- 资产命名（install/update 脚本按此匹配）：`ganyu-agent-<os>-<arch>.tar.gz`
+  （windows-x86_64 / linux-x86_64 / macos-arm64）。
+- 改 asset 命名时**必须同步** `install.ps1`/`install.sh`/`src/main.rs`（update）三处。
+- 无本地 cargo 也可验证：CI 三平台编译即最终验证（WorkBuddy 等受控环境可能拦截
+  cargo 锁文件创建，本地编译失败时优先走 CI）。
+
 ## 贡献流程
 
 Fork → 分支 → 取舍先 ADR → 编码+测试 → 全绿 → PR（说明动机与验证证据）。

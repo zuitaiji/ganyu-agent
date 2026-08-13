@@ -36,6 +36,9 @@
 ## 2. 配置
 
 环境变量全量清单、场景模板（开发/生产/容器）见 **[docs/config-guide.md](docs/config-guide.md)**。
+`ganyu setup` 交互向导写入 `~/.ganyu/config.toml`（含 API key）；`ganyu gateway setup`
+写入 Telegram bot token（`[gateway]` 段）——**两者均为敏感凭据，勿提交仓库/外传**；
+生产从密钥管理器注入 env（`OPENAI_API_BASE/KEY` 优先于文件）。
 
 生产加固一句话：
 ```bash

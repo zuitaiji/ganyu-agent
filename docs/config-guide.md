@@ -36,17 +36,30 @@ cargo --features shell ─┐
 
 ### 配置文件（一站式，对标 OpenClaw config.yaml）
 
-写一次 `~/.ganyu/config.toml`，之后 `ganyu-agent chat` 直接对话，无需 export：
+**推荐用交互式向导**（免手写、回车沿用当前值）：
+
+```bash
+ganyu setup
+# 依次输入 base_url / api_key / model → 写入 ~/.ganyu/config.toml
+# 脚本/CI 可用参数模式：ganyu setup --base_url X --api_key Y --model Z
+```
+
+等价的手写方式（`~/.ganyu/config.toml`，之后 `ganyu-agent chat` 直接对话，无需 export）：
 
 ```toml
 [model]
 base_url = "https://apihub.agnes-ai.com/v1"
 api_key = "sk-..."
 model = "agnes-2.5-flash"
+
+# 可选：Telegram 消息平台网关（ganyu gateway start 使用）
+[gateway]
+telegram_token = "123456:ABC..."
 ```
 
 规则：路径优先级 `$GANYU_CONFIG` > `~/.ganyu/config.toml` > `./ganyu.toml`；
-**已设置的环境变量优先于文件**（CI/容器友好）。实现：`config::load_model_config()`。
+**已设置的环境变量优先于文件**（CI/容器友好）。实现：`config::load_model_config()`；
+写入实现：`config::write_model_config()` / `write_gateway_token()`（保留文件中其他段）。
 
 ## 3. 场景配置模板
 
@@ -99,9 +112,9 @@ docker run --rm -it \
 
 ## 5. 常见问题
 
-- **为什么不是 config.toml？** 保持零依赖与离线优先；env 是单一来源（ADR-006 已记录，
-  config.toml 文件化为后续迭代项，Pi 式「配置即文件」）。现已支持 `~/.ganyu/config.toml`（见 §2.5）。
-- **密钥安全**：`GANYU_MEM_KEY`/`OPENAI_API_KEY` 勿写入仓库；生产从密钥管理器注入，
+- **为什么是 env + config.toml 双轨？** 保持零依赖与离线优先；env 是单一事实来源（ADR-006），
+  `~/.ganyu/config.toml` 提供一站式文件配置（Pi 式「配置即文件」，`setup` 向导自动写入）。
+- **密钥安全**：`GANYU_MEM_KEY`/`OPENAI_API_KEY`/`telegram_token` 勿写入仓库；生产从密钥管理器注入，
   `secret` 特性下 API key 内存清零（L1）。
 - **改了 env 要重启吗？** 配置在启动时读取一次；网关后端可运行时 `hot_reload`（network）。
 - **`web_fetch` 抓取报 Ssrf / 外网"不能联网"？** Clash 类代理用 fake-ip（198.18.0.0/15、

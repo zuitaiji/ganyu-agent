@@ -8,7 +8,7 @@
 
 | 领域 | 能力 |
 |------|------|
-| **开箱即用** | `~/.ganyu/config.toml` 一键配模型 → 交互式 REPL 对话；`doctor` 环境诊断；安装脚本引导 |
+| **开箱即用** | 一条命令安装（免编译下载 release）→ `ganyu setup` 一键配模型 → 交互式 REPL 对话；`doctor` 环境诊断；`update` 自更新 |
 | 多范式 | single / react / plan / multi / router / blackboard / graph（统一 `Unit`×`Workflow`） |
 | 推理 | ReAct 循环；`LlmReasoner` 接真模型（`@tool` 自动行动）；`@tool` 脚本 + JSON 原生函数调用 |
 | 自愈 | 重试+退避 · 熔断 · 级联 · lkgp · 限速 |
@@ -16,7 +16,7 @@
 | 知识 | SAG 五步管道 + MDL 校验 + SQL 注入防护 |
 | 可拓展 | `tool!` 宏 · 免重编译插件（白名单）· 可生长技能 |
 | 安全 | 文件沙箱 · SSRF 防护 · shell 双层开关 · 输出净化 · 审计 · 基线自检（12 层防线） |
-| 工程化 | 集中配置 · LRU+TTL 缓存 · JSON 审计 · 一键安装 · ADR 决策记录 |
+| 工程化 | 集中配置 · LRU+TTL 缓存 · JSON 审计 · CI 自动发布 · ADR 决策记录 |
 | 离线优先 | 默认零网络依赖；`network` 特性接真模型 |
 
 ## 快速开始（开箱即用）
@@ -74,11 +74,11 @@ install.sh / install.ps1 · SECURITY.md · Cargo.toml（特性矩阵）
 | 文档 | 内容 |
 |------|------|
 | [docs/README.md](docs/README.md) | 文档总索引 + 代码地图 |
-| [docs/install.md](docs/install.md) | 安装（脚本/cargo/源码 + 特性矩阵 + 开箱引导） |
-| [docs/config-guide.md](docs/config-guide.md) | **配置模型指导**（env 全量 + 配置文件 + 场景模板） |
-| [docs/usage.md](docs/usage.md) | CLI 使用（REPL / doctor / 全部子命令） |
+| [docs/install.md](docs/install.md) | 安装（一条命令免编译 / cargo / 源码 + 特性矩阵 + 开箱引导） |
+| [docs/config-guide.md](docs/config-guide.md) | **配置模型指导**（setup 向导 + env 全量 + 场景模板） |
+| [docs/usage.md](docs/usage.md) | CLI 使用（setup/model/update/gateway/REPL/doctor/全部子命令） |
 | [docs/architecture.md](docs/architecture.md) | 架构（对标范式） |
-| [docs/development.md](docs/development.md) | 开发/扩展/贡献 |
+| [docs/development.md](docs/development.md) | 开发/扩展/**发布流程（CI+tag）**/贡献 |
 | [SECURITY.md](SECURITY.md) | 安全基线（12 层防线） |
 | docs/ADR-001~008 | 架构决策记录 |
 

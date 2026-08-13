@@ -19,6 +19,9 @@ Accepted
 - **D5 兼容性修复（接真模型的四个缺口）**：reqwest `system-proxy`（环境代理）；
   `Role` `serde(rename_all="lowercase")`（OpenAI 兼容网关 400 根因）；网关 `ordered_names`
   本地兜底永远排最后（否则真后端被饿死）；`OPENAI_MODEL` 模型名可配置 + `reasoning_content` 推理模型回退。
+- **D6 交互式配置向导（v0.1.0+）**：`ganyu setup` 逐步问 base_url/api_key/model（回车沿用当前值），
+  写入 config.toml（保留其他段）；支持参数模式 `--base_url/--api_key/--model` 供脚本/CI。
+  配套：`model`（查看/切换当前模型）、`update`（release 自更新）、`gateway`（Telegram 网关）。
 
 ## Consequences
 - 易：写一次配置 → `ganyu-agent chat` 即真实模型对话；`doctor` 秒级定位配置问题；

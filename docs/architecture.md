@@ -1,7 +1,7 @@
 # ganyu-agent 架构概览
 
 > 以对标范式组织：**Pi 式极简 harness** × **OpenClaw 式执行网关** × **Hermes 式防护与闭环** × **Prime 式诚实边界**。
-> 决策记录见 ADR-001~007。
+> 决策记录见 ADR-001~008。
 
 ## 1. 定位：四种范式如何落到本项目
 
@@ -15,7 +15,7 @@
 ## 2. 分层
 
 ```
-接入层 CLI（run/chat/agent/sag/tools/selftest）
+接入层 CLI（run/chat/agent/sag/setup/update/model/models/gateway/tools/selftest/doctor）
    │
 编排层 Agent(ReAct) · Workflow(7 范式) · Unit + RunContext
    │
@@ -66,8 +66,9 @@
 | `routing/` | 网关 + 缓存 + 审计 + 输出净化 |
 | `security.rs` | 文件沙箱/SSRF/shell 开关/净化（失败闭环） |
 | `sandbox.rs` | Landlock（Linux-only） |
-| `config.rs` | 配置 + 基线自检 |
+| `config.rs` | 配置 + 基线自检 + config.toml 读写（model/gateway 段） |
 | `cache.rs` / `observe.rs` | LRU+TTL 缓存 / JSON Lines 审计 |
+| `main.rs` CLI | 子命令分发；`setup`（交互向导）/`update`（release 自更新）/`model`（切换）/`gateway`（Telegram 长轮询） |
 
 ## 6. 扩展点（对标 Pi 原语哲学）
 
