@@ -16,3 +16,6 @@ _ps_check.txt
 _kill_flag.txt
 _u*.txt
 _k*.txt
+# 轮询诊断日志
+polled.log
+*.polled.log
