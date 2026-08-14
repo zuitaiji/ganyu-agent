@@ -42,7 +42,7 @@ fn sha256_of_file(path: &Path) -> GanyuResult<String> {
     #[cfg(target_os = "windows")]
     {
         let out = std::process::Command::new("certutil")
-            .args(["-hashfile", path.to_str().unwrap_or_default(), "SHA256"])
+            .args(["-hashfile", path.to_str().ok_or_else(|| GanyuError::Http("文件路径包含非 UTF-8 字符，无法计算 SHA256".to_string()))?, "SHA256"])
             .output()
             .map_err(GanyuError::Io)?;
         let text = String::from_utf8_lossy(&out.stdout);
@@ -63,6 +63,20 @@ fn sha256_of_file(path: &Path) -> GanyuResult<String> {
         let text = String::from_utf8_lossy(&out.stdout);
         Ok(text.split_whitespace().next().unwrap_or("").to_lowercase())
     }
+}
+
+fn default_memory_path() -> std::path::PathBuf {
+    let base = std::env::var("GANYU_HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    let mut p = std::path::PathBuf::from(base);
+    p.push(".ganyu");
+    p.push("ganyu_agent_memory.json");
+    if let Some(parent) = p.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    p
 }
 
 #[tokio::main]
@@ -125,12 +139,12 @@ async fn main() -> GanyuResult<()> {
     }
     let cmd = cmd.as_deref().unwrap_or("chat");
 
-    let memory: DynMemory = Arc::new(LocalMemory::new(".ganyu_memory.json"));
+    let memory: DynMemory = Arc::new(LocalMemory::new(default_memory_path()));
 
     // 工程化配置面：集中读取 GANYU_*，据此启用缓存/限速/审计。
     let cfg = ganyu_agent::config::GanyuConfig::from_env();
     // 一站式：从 ~/.ganyu/config.toml 加载模型配置（已设置的环境变量优先）。
-    ganyu_agent::config::load_model_config();
+    // 凭据改为下方 read_model_config 显式取用（F-10），不再全局 set_var。
     let audit = Arc::new(ganyu_agent::observe::AuditLog::from_config());
 
     let mut gateway = Gateway::new();
@@ -143,16 +157,18 @@ async fn main() -> GanyuResult<()> {
     }
     gateway.set_audit(audit.clone());
 
-    if let (Ok(base), Ok(key)) = (
-        std::env::var("OPENAI_API_BASE"),
-        std::env::var("OPENAI_API_KEY"),
-    ) {
+    // F-10：凭据优先取环境变量，回退到配置文件（read_model_config），不再依赖 load_model_config 写入全局环境。
+    let mcfg = ganyu_agent::config::read_model_config();
+    let base = std::env::var("OPENAI_API_BASE").ok().or(mcfg.0);
+    let key = std::env::var("OPENAI_API_KEY").ok().or(mcfg.1);
+    let model = std::env::var("OPENAI_MODEL").ok().or(mcfg.2);
+    if let (Some(base), Some(key)) = (base, key) {
         // 模型名可用 OPENAI_MODEL 覆盖（默认 gpt-4o-mini；OpenAI 兼容端点均可）。
-        let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+        let model = model.unwrap_or_else(|| "gpt-4o-mini".to_string());
         #[cfg(feature = "network")]
         gateway.register(Arc::new(OpenAiBackend::new(&base, &key, &model)) as DynBackend);
         #[cfg(not(feature = "network"))]
-        let _ = (base, key);
+        let _ = (base, key, model);
     }
 
     // 工具层：内置能力 + 插件发现 + 只读缓存
@@ -324,9 +340,11 @@ async fn main() -> GanyuResult<()> {
                 tools.names().len(),
                 skills.skill_names().len()
             );
-            let mem_ok = std::path::Path::new(".ganyu_memory.json").exists();
+            let mem_path = default_memory_path();
+            let mem_ok = mem_path.exists();
             println!(
-                "记忆文件 : .ganyu_memory.json [{}]",
+                "记忆文件 : {} [{}]",
+                mem_path.display(),
                 if mem_ok { "存在" } else { "尚未创建" }
             );
             let model_ready = cfg!(feature = "network")
@@ -453,9 +471,7 @@ async fn main() -> GanyuResult<()> {
 
             ganyu_agent::config::write_model_config(base.trim(), key.trim(), model.trim())?;
             // 写入后立即生效（env 覆盖规则：setup 显式写入，强制刷新）。
-            std::env::set_var("OPENAI_API_BASE", base.trim());
-            std::env::set_var("OPENAI_API_KEY", key.trim());
-            std::env::set_var("OPENAI_MODEL", model.trim());
+            // F-10：密钥不再写入全局环境，配置文件已落盘，下次启动自动加载。
             let path = ganyu_agent::config::config_path().unwrap_or_default();
             println!("✅ 已写入 {path}");
             println!("   模型: {} ({}，key={})", model.trim(), base.trim(), mask(&Some(key.trim().to_string())).unwrap_or_default());
@@ -553,7 +569,14 @@ async fn main() -> GanyuResult<()> {
                     .unwrap_or("")
                     .to_lowercase();
                 if expected.is_empty() {
-                    eprintln!("⚠️ 未获取到 sha256 校验文件（release 资产可能未生成），跳过校验。");
+                    if std::env::var("GANYU_UPDATE_ALLOW_NOCHECK").is_ok() {
+                        eprintln!("[warn] 未获取到 sha256 校验文件，但 GANYU_UPDATE_ALLOW_NOCHECK=1 已设置，跳过校验继续。");
+                    } else {
+                        eprintln!("[fatal] 未获取到 sha256 校验文件，出于安全考虑拒绝自动应用更新。");
+                        eprintln!("        如需继续，请用 GANYU_UPDATE_ALLOW_NOCHECK=1 显式强制覆盖，或手动下载并用 ganyu doctor 校验。");
+                        let _ = std::fs::remove_file(&tmp);
+                        std::process::exit(1);
+                    }
                 } else {
                     let actual = sha256_of_file(&tmp)?;
                     if actual != expected {
@@ -568,6 +591,19 @@ async fn main() -> GanyuResult<()> {
 
                 // 解压：统一 tar.gz（Windows 10 1803+ 自带 bsdtar；Linux/macOS 自带 tar）。
                 use std::process::Command;
+                {
+                    let list_out = Command::new("tar").args(["-tzf", tmp.to_str().unwrap()]).output();
+                    if let Ok(o) = list_out {
+                        let entries = String::from_utf8_lossy(&o.stdout);
+                        for e in entries.lines() {
+                            if e.starts_with('/') || e.starts_with('\\') || e.contains("..") {
+                                eprintln!("[fatal] 更新包含非法路径（{e}），疑似路径穿越，已拒绝。");
+                                let _ = std::fs::remove_file(&tmp);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
                 let status = Command::new("tar")
                     .args(["-xzf", tmp.to_str().unwrap(), "-C", &bin_dir])
                     .status()

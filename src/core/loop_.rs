@@ -56,15 +56,8 @@ pub struct LocalReasoner;
 #[async_trait]
 impl Reasoner for LocalReasoner {
     async fn decide(&self, user_msg: &str, known: &HashSet<String>) -> GanyuResult<Decision> {
-        for line in user_msg.lines() {
-            let line = line.trim();
-            // M6：兼容 JSON 原生函数调用与 `@tool arg` 离线脚本两种语法。
-            if let Some((tool, args)) = parse_tool_call(line) {
-                if known.contains(&tool) {
-                    let remaining = strip_first_tool_line(user_msg, line);
-                    return Ok(Decision::Act { tool, args, remaining });
-                }
-            }
+        if let Some((tool, args, remaining)) = parse_known_tool(user_msg, known) {
+            return Ok(Decision::Act { tool, args, remaining });
         }
         Ok(Decision::Final(default_fallback(user_msg)))
     }
@@ -87,6 +80,12 @@ impl LlmReasoner {
 #[async_trait]
 impl Reasoner for LlmReasoner {
     async fn decide(&self, user_msg: &str, known: &HashSet<String>) -> GanyuResult<Decision> {
+        // 强制工具指令：@tool / JSON 调用不经过模型，确定性执行。
+        // 避免模型"假装"执行（如直接回复"已记住"而未真调 remember），
+        // 与离线 LocalReasoner 行为对齐；模型只负责自由对话。
+        if let Some((tool, args, remaining)) = parse_known_tool(user_msg, known) {
+            return Ok(Decision::Act { tool, args, remaining });
+        }
         let tools: Vec<String> = known.iter().cloned().collect();
         let sys = format!(
             "你是 ganyu 智能体的决策器。可用工具：{}。\
@@ -174,6 +173,36 @@ fn strip_first_tool_line(msg: &str, line: &str) -> String {
     out.trim().to_string()
 }
 
+/// 解析 user_msg 中的工具指令（`@tool arg` 或 JSON），命中已知工具则返回
+/// `(tool, args, remaining)`：
+/// - **多行参数**：`@tool` 行之后的非 `@` 行并入 args（file_write/remember 等
+///   "首行路径/键 + 内容" 工具可直接用，不再只能写空内容）；
+/// - 后续行以 `@` 开头（下一个工具调用）或为空 → 不并入，remaining 保留供循环继续。
+/// 供 LocalReasoner（离线确定性）与 LlmReasoner（联网强制解析，杜绝模型"假装"执行）共用。
+fn parse_known_tool(user_msg: &str, known: &HashSet<String>) -> Option<(String, String, String)> {
+    for line in user_msg.lines() {
+        let line = line.trim();
+        if let Some((tool, args)) = parse_tool_call(line) {
+            if known.contains(&tool) {
+                let rest = strip_first_tool_line(user_msg, line);
+                let first_rest = rest.lines().next().map(|s| s.trim()).unwrap_or("");
+                let more_tools = first_rest.starts_with('@') || rest.trim().is_empty();
+                if more_tools {
+                    return Some((tool, args, rest));
+                }
+                // 非 @ 内容并入参数（多行内容）
+                let merged = if args.is_empty() {
+                    rest.trim_end().to_string()
+                } else {
+                    format!("{args}\n{}", rest.trim_end())
+                };
+                return Some((tool, merged, String::new()));
+            }
+        }
+    }
+    None
+}
+
 fn default_fallback(msg: &str) -> String {
     let preview: String = msg.chars().take(60).collect();
     format!(
@@ -215,6 +244,43 @@ mod tests {
                 assert_eq!(tool, "echo");
                 assert!(remaining.contains("calc 2+2"));
                 assert!(remaining.contains("收尾"));
+            }
+            _ => panic!("expected Act"),
+        }
+    }
+
+    #[tokio::test]
+    async fn local_reasoner_multiline_args_merged() {
+        let mut known = HashSet::new();
+        known.insert("file_write".to_string());
+        // @tool 行之后的非 @ 内容并入参数（多行内容）
+        let d = LocalReasoner
+            .decide("@file_write a.txt\nhello", &known)
+            .await
+            .unwrap();
+        match d {
+            Decision::Act { tool, args, remaining } => {
+                assert_eq!(tool, "file_write");
+                assert_eq!(args, "a.txt\nhello");
+                assert!(remaining.is_empty());
+            }
+            _ => panic!("expected Act"),
+        }
+    }
+
+    #[tokio::test]
+    async fn local_reasoner_json_call_resolves() {
+        let mut known = HashSet::new();
+        known.insert("file_write".to_string());
+        let d = LocalReasoner
+            .decide(r#"{"tool":"file_write","args":"a.txt\nhello"}"#, &known)
+            .await
+            .unwrap();
+        match d {
+            Decision::Act { tool, args, remaining } => {
+                assert_eq!(tool, "file_write");
+                assert_eq!(args, "a.txt\nhello");
+                assert!(remaining.is_empty());
             }
             _ => panic!("expected Act"),
         }
