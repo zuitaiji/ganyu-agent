@@ -85,4 +85,5 @@ GANYU_ALLOW_SHELL=1 ganyu run "@exec echo hi"      # exec（需 shell 特性）
 | 文件读不到 | 文件工具仅限沙箱根（默认 `.ganyu_workspace`）内相对路径 |
 | 插件未加载 | 需 `GANYU_ALLOW_PLUGINS=1` + `vetted:true` + 程序白名单 |
 | `update` 找不到资产 | 该版本未发布 release（先 `git tag vX.Y.Z && git push --tags`），或稍后重试 |
+| `update` 报 sha256 校验失败 | 资产被篡改或下载损坏，立即停止并重新 update（校验文件缺失时仅警告不阻断） |
 | `gateway` 未配置 | 先 `ganyu gateway setup <bot_token>`；token 在 [BotFather](https://t.me/BotFather) 创建 |

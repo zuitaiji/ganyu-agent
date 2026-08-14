@@ -67,7 +67,9 @@ git tag v0.1.1 && git push origin v0.1.1
 
 - 资产命名（install/update 脚本按此匹配）：`ganyu-agent-<os>-<arch>.tar.gz`
   （windows-x86_64 / linux-x86_64 / macos-arm64）。
-- 改 asset 命名时**必须同步** `install.ps1`/`install.sh`/`src/main.rs`（update）三处。
+- CI 自动为每个资产生成 `<资产>.sha256`（Checksum 步骤），install/update 下载后校验（防篡改）；
+  改资产命名时**必须同步** `install.ps1`/`install.sh`/`src/main.rs`（update）三处。
+- CI 每次发布跑 `cargo test --features hardened`（含 config 读写单测）。
 - 无本地 cargo 也可验证：CI 三平台编译即最终验证（WorkBuddy 等受控环境可能拦截
   cargo 锁文件创建，本地编译失败时优先走 CI）。
 
