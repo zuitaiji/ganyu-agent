@@ -36,6 +36,9 @@ jobs:
       - name: Build (hardened)
         run: cargo build --release --features hardened --locked
 
+      - name: Test
+        run: cargo test --features hardened
+
       - name: Smoke test
         run: |
           target/release/ganyu-agent tools
@@ -49,11 +52,20 @@ jobs:
           # 归档名统一为 ganyu-agent（无扩展名），与 Linux/macOS 一致。勿显式 cp（会自复制失败）。
           tar -czf "$TMP/${{ matrix.artifact }}" -C target/release ganyu-agent
 
+      - name: Checksum
+        shell: bash
+        run: |
+          if command -v cygpath >/dev/null 2>&1; then TMP="$(cygpath -u "$RUNNER_TEMP")"; else TMP="$RUNNER_TEMP"; fi
+          cd "$TMP"
+          sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
+
       - name: Upload asset
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ runner.temp }}/${{ matrix.artifact }}
+          path: |
+            ${{ runner.temp }}/${{ matrix.artifact }}
+            ${{ runner.temp }}/${{ matrix.artifact }}.sha256
           if-no-files-found: error
 
   release:

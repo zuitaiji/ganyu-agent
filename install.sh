@@ -79,6 +79,20 @@ if [[ -z "$GANYU_FEATURES" ]]; then
   trap 'rm -rf "$TMP"' EXIT
   echo "[install] 下载 $DL_URL"
   curl -fsSL "$DL_URL" -o "$TMP/$ASSET"
+
+  # 供应链校验：下载配套 .sha256 并对比（release 资产由 CI 生成）
+  echo "[install] 校验 sha256"
+  if curl -fsSL "$DL_URL.sha256" -o "$TMP/$ASSET.sha256" 2>/dev/null; then
+    if (cd "$TMP" && sha256sum -c "$ASSET.sha256") >/dev/null 2>&1; then
+      echo "[install] ✅ sha256 校验通过"
+    else
+      echo "[install] ❌ sha256 校验失败：资产可能被篡改！" >&2
+      exit 1
+    fi
+  else
+    echo "[install] ⚠️ 未获取到 sha256 校验文件（跳过校验）"
+  fi
+
   case "$ASSET" in
     *.zip)    (cd "$TMP" && unzip -o "$ASSET" >/dev/null) ;;
     *.tar.gz) (cd "$TMP" && tar -xzf "$ASSET") ;;

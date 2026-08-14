@@ -297,6 +297,68 @@ mod cfg {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// env 隔离：所有测试串行执行（GANYU_CONFIG 是进程级全局，并行会互相覆盖）。
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn tmp_config(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ganyu-cfg-test-{name}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("config.toml")
+    }
+
+    #[test]
+    fn write_read_model_roundtrip() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let p = tmp_config("model");
+        std::env::set_var("GANYU_CONFIG", &p);
+        write_model_config("https://api.test/v1", "sk-test-key-123456", "model-1").unwrap();
+        let (b, k, m) = read_model_config();
+        assert_eq!(b.as_deref(), Some("https://api.test/v1"));
+        assert_eq!(k.as_deref(), Some("sk-test-key-123456"));
+        assert_eq!(m.as_deref(), Some("model-1"));
+        std::env::remove_var("GANYU_CONFIG");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn write_preserves_other_sections() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let p = tmp_config("preserve");
+        std::env::set_var("GANYU_CONFIG", &p);
+        // 预置文件含其他段
+        std::fs::write(
+            &p,
+            "[other]\nkey = \"keep-me\"\n",
+        )
+        .unwrap();
+        write_model_config("https://api.test/v1", "sk-k", "m").unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains("keep-me"), "其他段被覆盖: {text}");
+        assert!(text.contains("[model]"));
+        std::env::remove_var("GANYU_CONFIG");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn gateway_token_roundtrip_with_model_coexist() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let p = tmp_config("gw");
+        std::env::set_var("GANYU_CONFIG", &p);
+        write_gateway_token("123456:ABC-DEF").unwrap();
+        assert_eq!(read_gateway_token().as_deref(), Some("123456:ABC-DEF"));
+        // model 与 gateway 段共存
+        write_model_config("https://api.test/v1", "sk-k", "m").unwrap();
+        assert_eq!(read_gateway_token().as_deref(), Some("123456:ABC-DEF"));
+        let (_, _, m) = read_model_config();
+        assert_eq!(m.as_deref(), Some("m"));
+        std::env::remove_var("GANYU_CONFIG");
+        let _ = std::fs::remove_file(&p);
+    }
 
     #[test]
     fn defaults_are_fail_closed() {

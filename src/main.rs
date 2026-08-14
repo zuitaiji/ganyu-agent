@@ -36,6 +36,35 @@ use ganyu_agent::value::Value;
 use ganyu_agent::{GanyuError, GanyuResult};
 use std::collections::HashMap;
 
+/// 计算文件 SHA256（update 校验用）。用系统工具避免新增依赖：
+/// Windows `certutil -hashfile`，Linux/macOS `sha256sum`。
+fn sha256_of_file(path: &Path) -> GanyuResult<String> {
+    #[cfg(target_os = "windows")]
+    {
+        let out = std::process::Command::new("certutil")
+            .args(["-hashfile", path.to_str().unwrap_or_default(), "SHA256"])
+            .output()
+            .map_err(GanyuError::Io)?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
+            let t = line.trim();
+            if t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Ok(t.to_lowercase());
+            }
+        }
+        Err(GanyuError::Http("certutil 输出解析失败（未找到 SHA256 行）".to_string()))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let out = std::process::Command::new("sha256sum")
+            .arg(path)
+            .output()
+            .map_err(GanyuError::Io)?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        Ok(text.split_whitespace().next().unwrap_or("").to_lowercase())
+    }
+}
+
 #[tokio::main]
 async fn main() -> GanyuResult<()> {
     let raw: Vec<String> = std::env::args().collect();
@@ -362,9 +391,14 @@ async fn main() -> GanyuResult<()> {
                 };
                 print!("{label}{hint}: ");
                 std::io::stdout().flush()?;
-                let mut line = String::new();
-                std::io::stdin().read_line(&mut line)?;
-                let v = line.trim().to_string();
+                // 密钥用掩码输入（rpassword，终端不回显明文）
+                let v = if is_secret {
+                    rpassword::read_password()?.trim().to_string()
+                } else {
+                    let mut line = String::new();
+                    std::io::stdin().read_line(&mut line)?;
+                    line.trim().to_string()
+                };
                 if v.is_empty() {
                     Ok(cur.unwrap_or_default())
                 } else {
@@ -468,7 +502,9 @@ async fn main() -> GanyuResult<()> {
                 let bin_path = format!("{bin_dir}/ganyu-agent{}", if os == "windows" { ".exe" } else { "" });
 
                 println!("[update] {tag} → {bin_path}");
-                let tmp = std::env::temp_dir().join(&asset);
+                // 临时文件加随机后缀，避免并发 update 冲突
+                let tmp = std::env::temp_dir()
+                    .join(format!("{asset}.{}.tmp", uuid::Uuid::new_v4()));
                 let bytes = client.get(&url).send().await
                     .map_err(|e| GanyuError::Http(e.to_string()))?
                     .error_for_status()
@@ -476,7 +512,34 @@ async fn main() -> GanyuResult<()> {
                     .bytes().await
                     .map_err(|e| GanyuError::Http(e.to_string()))?;
                 std::fs::write(&tmp, &bytes)?;
-                println!("[update] 下载完成（{} bytes），解压替换…", bytes.len());
+                println!("[update] 下载完成（{} bytes），校验 sha256…", bytes.len());
+
+                // 供应链校验：下载配套 .sha256 并对比（release 资产由 CI 生成）
+                let sha_url = format!("{url}.sha256");
+                let sha_bytes = client.get(&sha_url).send().await
+                    .map_err(|e| GanyuError::Http(e.to_string()))?
+                    .error_for_status()
+                    .map_err(|e| GanyuError::Http(e.to_string()))?
+                    .bytes().await
+                    .map_err(|e| GanyuError::Http(e.to_string()))?;
+                let expected = String::from_utf8_lossy(&sha_bytes)
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .to_lowercase();
+                if expected.is_empty() {
+                    eprintln!("⚠️ 未获取到 sha256 校验文件（release 资产可能未生成），跳过校验。");
+                } else {
+                    let actual = sha256_of_file(&tmp)?;
+                    if actual != expected {
+                        eprintln!("⚠️ sha256 校验失败：资产可能被篡改！");
+                        eprintln!("   期望 {expected}");
+                        eprintln!("   实际 {actual}");
+                        let _ = std::fs::remove_file(&tmp);
+                        std::process::exit(1);
+                    }
+                    println!("[update] sha256 校验通过 ✅");
+                }
 
                 // 解压：统一 tar.gz（Windows 10 1803+ 自带 bsdtar；Linux/macOS 自带 tar）。
                 use std::process::Command;
@@ -568,11 +631,10 @@ async fn main() -> GanyuResult<()> {
                         let token = positional.get(1).cloned().or_else(|| {
                             use std::io::{IsTerminal, Write as _};
                             if std::io::stdin().is_terminal() {
-                                print!("Telegram bot token: ");
+                                print!("Telegram bot token（掩码输入）: ");
                                 std::io::stdout().flush().ok();
-                                let mut line = String::new();
-                                std::io::stdin().read_line(&mut line).ok();
-                                let t = line.trim().to_string();
+                                let t = rpassword::read_password().ok()?;
+                                let t = t.trim().to_string();
                                 if t.is_empty() { None } else { Some(t) }
                             } else { None }
                         });
@@ -620,6 +682,9 @@ async fn main() -> GanyuResult<()> {
                         let bot_name = me["result"]["username"].as_str().unwrap_or("bot");
                         println!("✅ Telegram 网关已启动（@{bot_name}）。Ctrl+C 退出。");
 
+                        // 会话隔离：每个 chat_id 一个独立 Agent/session（懒创建缓存），
+                        // 避免多用户消息串同一上下文。重启网关后为新 session（会话不跨重启）。
+                        let mut chat_agents: HashMap<i64, Arc<Agent>> = HashMap::new();
                         let mut offset: i64 = 0;
                         loop {
                             // 长轮询：timeout=25s 保持连接，减少无效请求
@@ -660,8 +725,21 @@ async fn main() -> GanyuResult<()> {
                                 let text = text.trim().to_string();
                                 if text.is_empty() { continue; }
                                 println!("[gateway] @{from}: {text}");
-                                // 用同一 agent 推理（会话延续）
-                                let out = match agent.run(&Value(text.clone())).await {
+                                // 按 chat_id 隔离会话；首次创建独立 Agent（共享工具/记忆/网关）
+                                let chat_agent = chat_agents.entry(chat_id).or_insert_with(|| {
+                                    let sid = SessionId::new();
+                                    println!("[gateway] 新会话 chat={chat_id} session={sid}");
+                                    Arc::new(Agent::new(
+                                        agent.gateway.clone(),
+                                        memory.clone(),
+                                        tools.clone(),
+                                        skills.clone(),
+                                        agent.reasoner.clone(),
+                                        sid,
+                                    ))
+                                });
+                                // 用该会话的 agent 推理
+                                let out = match chat_agent.run(&Value(text.clone())).await {
                                     Ok(v) => v.to_string(),
                                     Err(e) => format!("抱歉，处理出错: {e}"),
                                 };

@@ -14,6 +14,8 @@ thiserror = "1"
 regex = "1"
 # 配置文件（~/.ganyu/config.toml）解析——纯 Rust 轻量依赖，所有构建可用。
 toml = "0.8"
+# 交互式掩码输入（setup 的 api_key / gateway token，不明文回显）。纯 Rust，无系统依赖。
+rpassword = "7"
 
 # 联网后端（真实 LLM / OpenViking）默认关闭，避免引入 TLS/C 编译依赖。
 # 开启：cargo run --features network

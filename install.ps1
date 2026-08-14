@@ -57,6 +57,23 @@ if (-not $Features) {
   $zipPath = Join-Path ([IO.Path]::GetTempPath()) $asset
   Write-Host "[install] 下载 $downloadUrl"
   Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
+
+  # 供应链校验：下载配套 .sha256 并对比（release 资产由 CI 生成）
+  $shaPath = Join-Path ([IO.Path]::GetTempPath()) "$asset.sha256"
+  try {
+    Invoke-WebRequest -Uri "$downloadUrl.sha256" -OutFile $shaPath -UseBasicParsing
+    $expected = ((Get-Content $shaPath -Raw).Trim() -split '\s+')[0]
+    $actual = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
+    if ($actual -ne $expected) {
+      Remove-Item $zipPath, $shaPath -Force -ErrorAction SilentlyContinue
+      Write-Error "sha256 校验失败：资产可能被篡改！`n期望 $expected`n实际 $actual"
+    }
+    Write-Host "[install] sha256 校验通过" -ForegroundColor Green
+  } catch {
+    Write-Host "[install] 警告：未获取到 sha256 校验文件（跳过校验）" -ForegroundColor Yellow
+  }
+  Remove-Item $shaPath -Force -ErrorAction SilentlyContinue
+
   # Windows 10 1803+ 自带 bsdtar；tar.gz 统一解压（比 Expand-Archive 更稳）。
   & tar -xzf $zipPath -C $binDir
   if ($LASTEXITCODE -ne 0) { Write-Error "解压失败：tar -xzf $zipPath -C $binDir" }
