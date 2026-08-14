@@ -7,6 +7,7 @@
 //! - `builtins` / `skills`：具体的内置工具与内置技能实现。
 
 pub mod builtins;
+pub mod nomifun_caps;
 pub mod skills;
 
 pub use skills::{Skill, SkillStep, SkillTool};
@@ -364,6 +365,12 @@ impl SkillBook {
         for (kw, skill) in rules {
             if q.contains(kw) && self.get_skill(skill).is_some() {
                 return Some(skill.to_string());
+            }
+        }
+        // nomifun 内置 agent 能力全量路由：命中即派发到对应 skill。
+        if let Some(skill) = crate::ext::nomifun_caps::match_nomifun_intent(&q) {
+            if self.get_skill(&skill).is_some() {
+                return Some(skill);
             }
         }
         None

@@ -23,6 +23,7 @@ use ganyu_agent::core::workflow::{
 };
 use ganyu_agent::core::Agent;
 use ganyu_agent::ext::builtins::register_core_tools;
+use ganyu_agent::ext::nomifun_caps::{register_nomifun_skills, NomifunSkillTool};
 use ganyu_agent::ext::skills::{register_core_skills, SkillTool};
 use ganyu_agent::ext::SkillBook;
 use ganyu_agent::ext::ToolRegistry;
@@ -118,6 +119,8 @@ async fn main() -> GanyuResult<()> {
     // 技能层：内置特性技能 + 注册为 `skill:<name>` 工具
     let skills = Arc::new(SkillBook::new(memory.clone()));
     register_core_skills(&skills);
+    register_nomifun_skills(&skills); // nomifun 内置 agent 能力全量赋能
+    tools.register(Arc::new(NomifunSkillTool)); // nomifun 能力派发（离线/网关桥接）
     for name in skills.skill_names() {
         let desc = skills
             .get_skill(&name)
@@ -324,8 +327,13 @@ async fn main() -> GanyuResult<()> {
             let (cur_base, cur_key, cur_model) = ganyu_agent::config::read_model_config();
             let mask = |s: &Option<String>| {
                 s.as_deref().map(|v| {
-                    if v.len() > 8 {
-                        format!("{}…{}", &v[..4], &v[v.len() - 4..])
+                    let chars: Vec<char> = v.chars().collect();
+                    if chars.len() > 8 {
+                        format!(
+                            "{}…{}",
+                            chars[..4].iter().collect::<String>(),
+                            chars[chars.len() - 4..].iter().collect::<String>()
+                        )
                     } else {
                         "****".to_string()
                     }
@@ -482,6 +490,20 @@ async fn main() -> GanyuResult<()> {
                 }
                 let _ = std::fs::remove_file(&tmp);
 
+                // 资产内文件名统一为 ganyu-agent（无扩展名）；Windows 需对齐为 ganyu-agent.exe。
+                // 运行中的 exe 无法被覆盖（Windows 文件锁）——rename 失败时明确提示。
+                if os == "windows" {
+                    let unpacked = format!("{bin_dir}/ganyu-agent");
+                    if std::path::Path::new(&unpacked).exists() {
+                        let _ = std::fs::remove_file(&bin_path);
+                        if let Err(e) = std::fs::rename(&unpacked, &bin_path) {
+                            eprintln!("⚠️ 替换 {bin_path} 失败: {e}");
+                            eprintln!("   新版本已下载到 {unpacked}。请先退出所有 ganyu/ganyu-agent 会话后重试，或手动替换。");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+
                 // 别名同步 + 自检
                 if os == "windows" {
                     let _ = std::fs::copy(&bin_path, format!("{bin_dir}/ganyu.exe"));
@@ -513,7 +535,18 @@ async fn main() -> GanyuResult<()> {
             } else {
                 let masked = key
                     .as_deref()
-                    .map(|k| if k.len() > 8 { format!("{}…{}", &k[..4], &k[k.len() - 4..]) } else { "****".to_string() })
+                    .map(|k| {
+                        let chars: Vec<char> = k.chars().collect();
+                        if chars.len() > 8 {
+                            format!(
+                                "{}…{}",
+                                chars[..4].iter().collect::<String>(),
+                                chars[chars.len() - 4..].iter().collect::<String>()
+                            )
+                        } else {
+                            "****".to_string()
+                        }
+                    })
                     .unwrap_or_else(|| "<未配置>".to_string());
                 println!("== 当前模型配置 ==");
                 println!("  base_url: {}", base.as_deref().unwrap_or("<未配置>"));

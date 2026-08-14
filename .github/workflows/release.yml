@@ -45,6 +45,10 @@ jobs:
         shell: bash
         run: |
           if command -v cygpath >/dev/null 2>&1; then TMP="$(cygpath -u "$RUNNER_TEMP")"; else TMP="$RUNNER_TEMP"; fi
+          # 统一归档名 ganyu-agent（无扩展名）：Windows 显式复制 exe，避免依赖 MSYS tar 自动补 .exe
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp target/release/ganyu-agent.exe target/release/ganyu-agent
+          fi
           tar -czf "$TMP/${{ matrix.artifact }}" -C target/release ganyu-agent
 
       - name: Upload asset

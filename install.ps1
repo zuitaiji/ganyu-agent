@@ -62,12 +62,17 @@ if (-not $Features) {
   if ($LASTEXITCODE -ne 0) { Write-Error "解压失败：tar -xzf $zipPath -C $binDir" }
   Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 
-  # 资产内可能直接是 exe（zip 内为 ganyu-agent.exe）；兜底处理
-  if (-not (Test-Path $binPath)) {
-    $inner = Get-ChildItem -Path $binDir -Filter "ganyu-agent*" -File | Select-Object -First 1
-    if ($inner) { Copy-Item $inner.FullName $binPath -Force }
+  # 资产内文件名统一为 ganyu-agent（无扩展名）；Windows 对齐为 ganyu-agent.exe。
+  # 升级场景（已有旧 exe）同样需要同步，不能只看 Test-Path。
+  $unpacked = Join-Path $binDir "ganyu-agent"
+  if (Test-Path $unpacked) {
+    if (Test-Path $binPath) { Remove-Item $binPath -Force -ErrorAction SilentlyContinue }
+    if (-not (Test-Path $binPath)) { Rename-Item $unpacked $binPath -Force -ErrorAction SilentlyContinue }
+    if (-not (Test-Path $binPath)) { Copy-Item $unpacked $binPath -Force -ErrorAction SilentlyContinue }
   }
-  if (-not (Test-Path $binPath)) { Write-Error "安装失败：$binPath 不存在" }
+  if (-not (Test-Path $binPath)) {
+    Write-Error "安装失败：$binPath 无法写入。ganyu 正在运行？请先退出所有 ganyu/ganyu-agent 会话后重试。"
+  }
 }
 else {
   # ---- 路径二：源码编译（指定 -Features） ------------------------------------

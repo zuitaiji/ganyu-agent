@@ -18,6 +18,7 @@
 | 安全 | 文件沙箱 · SSRF 防护 · shell 双层开关 · 输出净化 · 审计 · 基线自检（12 层防线） |
 | 工程化 | 集中配置 · LRU+TTL 缓存 · JSON 审计 · CI 自动发布 · ADR 决策记录 |
 | 离线优先 | 默认零网络依赖；`network` 特性接真模型 |
+| nomifun 赋能 | 全量接入 nomifun 平台 **33 项内置 agent 能力**（代码/测试/安全/视频/设计/架构/调试等），注册为 `skill:<name>` 并进入意图路由；离线返回方法论 SOP，设 `GANYU_NOMIFUN_GATEWAY` 走真实桥接（详见 `docs/nomifun_capabilities.md`） |
 
 ## 快速开始（开箱即用）
 
