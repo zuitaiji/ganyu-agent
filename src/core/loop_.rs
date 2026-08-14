@@ -175,9 +175,9 @@ fn strip_first_tool_line(msg: &str, line: &str) -> String {
 
 /// 解析 user_msg 中的工具指令（`@tool arg` 或 JSON），命中已知工具则返回
 /// `(tool, args, remaining)`：
-/// - **多行参数**：`@tool` 行之后的非 `@` 行并入 args（file_write/remember 等
-///   "首行路径/键 + 内容" 工具可直接用，不再只能写空内容）；
-/// - 后续行以 `@` 开头（下一个工具调用）或为空 → 不并入，remaining 保留供循环继续。
+/// - **多行参数**：`@tool` 行之后、下一个 `@` 行之前的非 `@` 行并入 args
+///   （file_write/remember 等"首行路径/键 + 内容"工具可直接用）；
+/// - 下一个 `@` 行起（新的工具调用）及之后保留为 remaining，供循环继续执行。
 /// 供 LocalReasoner（离线确定性）与 LlmReasoner（联网强制解析，杜绝模型"假装"执行）共用。
 fn parse_known_tool(user_msg: &str, known: &HashSet<String>) -> Option<(String, String, String)> {
     for line in user_msg.lines() {
@@ -185,18 +185,27 @@ fn parse_known_tool(user_msg: &str, known: &HashSet<String>) -> Option<(String, 
         if let Some((tool, args)) = parse_tool_call(line) {
             if known.contains(&tool) {
                 let rest = strip_first_tool_line(user_msg, line);
-                let first_rest = rest.lines().next().map(|s| s.trim()).unwrap_or("");
-                let more_tools = first_rest.starts_with('@') || rest.trim().is_empty();
-                if more_tools {
-                    return Some((tool, args, rest));
+                if rest.trim().is_empty() {
+                    return Some((tool, args, String::new()));
                 }
-                // 非 @ 内容并入参数（多行内容）
-                let merged = if args.is_empty() {
-                    rest.trim_end().to_string()
-                } else {
-                    format!("{args}\n{}", rest.trim_end())
-                };
-                return Some((tool, merged, String::new()));
+                let mut merged = args;
+                let mut kept: Vec<&str> = Vec::new();
+                let mut collecting = false;
+                for l in rest.lines() {
+                    if collecting {
+                        kept.push(l);
+                    } else if l.trim().starts_with('@') {
+                        collecting = true;
+                        kept.push(l);
+                    } else {
+                        if merged.is_empty() {
+                            merged = l.trim_end().to_string();
+                        } else {
+                            merged = format!("{merged}\n{}", l.trim_end());
+                        }
+                    }
+                }
+                return Some((tool, merged, kept.join("\n")));
             }
         }
     }
