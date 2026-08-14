@@ -90,6 +90,31 @@ async fn main() -> GanyuResult<()> {
             k += 2;
             continue;
         }
+        if matches!(raw[k].as_str(), "--version" | "-V") {
+            println!("ganyu-agent {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        if matches!(raw[k].as_str(), "--help" | "-h" | "help") {
+            println!("ganyu-agent — 有温度、能自进化、可拓展、可自愈的 agent 系统");
+            println!();
+            println!("用法: ganyu [子命令] [参数]");
+            println!();
+            println!("  对话      chat             交互式 REPL（默认，无参数即进入）");
+            println!("  配置      setup            交互式配置模型（base_url/api_key/model）");
+            println!("           model [新模型id]   查看/切换模型");
+            println!("           models            查询网关可用模型列表");
+            println!("           doctor            环境诊断");
+            println!("  执行      run \"<脚本>\"      ReAct 多步推理");
+            println!("           agent \"任务\" --mode <范式>   指定范式编排");
+            println!("           sag \"<问题>\"      知识分析（SAG 管道）");
+            println!("           skill <名> <参数>  直接调用技能");
+            println!("  运维      update            从 GitHub Releases 自更新");
+            println!("           gateway setup/start   Telegram 消息平台网关");
+            println!("           tools | modes | selftest   工具/范式/自检");
+            println!();
+            println!("完整文档: https://github.com/zuitaiji/ganyu-agent/blob/main/docs/usage.md");
+            return Ok(());
+        }
         if cmd.is_none() {
             cmd = Some(raw[k].clone());
             k += 1;
@@ -961,29 +986,33 @@ async fn selftest() {
     );
     check!("with_retry 重试后成功", r == Ok("ok"));
 
-    // 2) SAG 端到端（本地，无网络）
+    // 2) SAG 端到端（本地，无网络）——依赖 examples/sample_mdl.json；
+    //    release 免编译安装没有 examples/，文件缺失时降级为跳过（不 panic）。
     let memory: DynMemory = Arc::new(LocalMemory::new(".ganyu_selftest_mem.json"));
     let gw = Gateway::new();
     gw.register(Arc::new(LocalBackend) as DynBackend);
     let skills = Arc::new(SkillBook::new(memory.clone()));
     register_core_skills(&skills);
-    let mdl = Mdl::load("examples/sample_mdl.json").unwrap();
-    let pipe = SagPipeline {
-        mdl: Arc::new(mdl),
-        gateway: Arc::new(gw),
-        memory: memory.clone(),
-        skills,
-        session: SessionId::new(),
-    };
-    let out = pipe
-        .run(&Value("上月华东区利润最高的三个产品".into()), None)
-        .await
-        .unwrap();
-    check!("SAG 生成并通过 MDL 校验", out.verdict == Verdict::Pass);
-    check!(
-        "SAG 产出合法 SQL",
-        out.sql.as_str().contains("SELECT") && out.sql.as_str().contains("profit")
-    );
+    if let Ok(mdl) = Mdl::load("examples/sample_mdl.json") {
+        let pipe = SagPipeline {
+            mdl: Arc::new(mdl),
+            gateway: Arc::new(gw),
+            memory: memory.clone(),
+            skills,
+            session: SessionId::new(),
+        };
+        let out = pipe
+            .run(&Value("上月华东区利润最高的三个产品".into()), None)
+            .await
+            .unwrap();
+        check!("SAG 生成并通过 MDL 校验", out.verdict == Verdict::Pass);
+        check!(
+            "SAG 产出合法 SQL",
+            out.sql.as_str().contains("SELECT") && out.sql.as_str().contains("profit")
+        );
+    } else {
+        check!("SAG 端到端（需 examples/sample_mdl.json，release 分发跳过）", true);
+    }
 
     // 2b) 会话记忆持久化 + 续接
     let sid = SessionId::new();
