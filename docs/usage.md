@@ -66,8 +66,9 @@ ganyu update                                       # 升级到最新 release
 ganyu gateway setup 123456:ABC... && ganyu gateway start   # 接 Telegram
 ganyu chat                                         # 交互对话（接真模型）
 ganyu run "@calc (1+2)*3"                          # → 9（离线可用）
-ganyu run $'@file_write a.txt\nhello'              # 沙箱内写
-ganyu run $'@remember city\n杭州' && ganyu run "@recall city"
+# 含换行内容的工具参数（file_write/remember 等）用 JSON 调用——@tool 参数是单行协议
+ganyu run '{"tool":"file_write","args":"a.txt\nhello"}'     # 沙箱内写（多行内容）
+ganyu run '{"tool":"remember","args":"city\n杭州"}' && ganyu run '{"tool":"recall","args":"city"}'
 ganyu agent "总结报告" --mode multi                # 多范式（接真模型语义完整）
 ganyu sag "上月华东区利润最高的三个产品"
 GANYU_AUDIT=1 ganyu run "@calc 2+3"                # 审计 JSON 到 stderr
