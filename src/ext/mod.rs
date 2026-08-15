@@ -404,6 +404,16 @@ fn is_safe_program(prog: &str) -> bool {
     if prog.is_empty() || prog.contains("..") {
         return false;
     }
+    // F-08：禁止把 shell 解释器当插件命令——shell 可直接执行任意命令，违背白名单语义。
+    let lower = prog.to_lowercase();
+    if matches!(
+        lower.as_str(),
+        "sh" | "bash" | "cmd" | "powershell" | "pwsh" | "zsh" | "fish"
+            | "sh.exe" | "bash.exe" | "cmd.exe" | "powershell.exe" | "pwsh.exe"
+            | "zsh.exe" | "fish.exe"
+    ) {
+        return false;
+    }
     if prog.starts_with('/') || prog.starts_with('\\') || prog.contains(':') {
         return false; // 拒绝绝对路径 / 盘符
     }

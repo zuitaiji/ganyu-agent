@@ -76,13 +76,26 @@ pub fn resolve_sandboxed(input: &str) -> GanyuResult<PathBuf> {
         None => parent_canon,
     };
 
-    if !resolved.starts_with(&root_canon) {
+    // 若目标文件自身是符号链接，规范化后应仍在根内（防符号链接逃逸，F-11）。
+    if let Ok(c) = resolved.canonicalize() {
+        if !c.starts_with(&root_canon) {
+            return Err(GanyuError::Forbidden(format!(
+                "路径经符号链接逃逸沙箱根：{raw}"
+            )));
+        }
+    }
+    if !has_prefix(&resolved, &root_canon) {
         return Err(GanyuError::Forbidden(format!(
             "路径逃逸沙箱根：{raw} -> {}",
             resolved.display()
         )));
     }
     Ok(resolved)
+}
+
+/// 与 `Path::starts_with` 等价，但在此显式命名以强调“沙箱边界”语义（F-11）。
+fn has_prefix(path: &Path, root: &Path) -> bool {
+    path.starts_with(root)
 }
 
 /// 尽量规范化目录；不存在则创建后再规范化（用于沙箱根/父目录）。
@@ -286,6 +299,14 @@ pub fn is_private_or_reserved(ip: IpAddr) -> bool {
             false
         }
     }
+}
+
+/// 把不可信外部数据（工具输出 / 其它 agent 产出 / 历史轨迹）包裹成显式边界，
+/// 提示下游模型或流程将其视为“数据”而非“指令”，缓解提示注入（F-06）。
+pub fn fence_untrusted(label: &str, content: &str) -> String {
+    format!(
+        "<<<BEGIN_UNTRUSTED_DATA[{label}]>>>\n{content}\n<<<END_UNTRUSTED_DATA[{label}]>>>"
+    )
 }
 
 #[cfg(test)]

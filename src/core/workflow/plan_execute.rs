@@ -16,6 +16,9 @@ use crate::value::Value;
 
 use super::Workflow;
 
+/// 单轮计划可执行的最大步数，防止 LLM 产出失控的长计划拖垮进程（F-05）。
+const MAX_PLAN_STEPS: usize = 20;
+
 /// 离线规划器：按中文连接词把请求拆成有序子任务。接真模型时替换为 LLM 规划器即可。
 pub struct LocalPlanner;
 
@@ -69,12 +72,14 @@ impl Workflow for PlanExecuteWorkflow {
     async fn run(&self, ctx: &RunContext, input: &Value) -> GanyuResult<Value> {
         // 1) 规划
         let plan_val = self.planner.run(ctx, input).await?;
+        // 限制计划步数上限，防止 LLM 产出失控的长计划拖垮进程（F-05）。
         let steps: Vec<String> = plan_val
             .as_str()
             .lines()
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(String::from)
+            .take(MAX_PLAN_STEPS)
             .collect();
 
         // 2) 逐步执行

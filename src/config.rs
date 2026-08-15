@@ -70,6 +70,15 @@ pub fn write_model_config(base_url: &str, api_key: &str, model: &str) -> crate::
     }
     let text = toml::to_string_pretty(&value).map_err(|e| GanyuError::Toml(e.to_string()))?;
     std::fs::write(&path, text)?;
+    // F-01：配置文件含 API Key，写后收紧为属主只读（Unix 0600）。
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(mut perms) = std::fs::metadata(&path).map(|m| m.permissions()) {
+            perms.set_mode(0o600);
+            let _ = std::fs::set_permissions(&path, perms);
+        }
+    }
     Ok(())
 }
 
@@ -175,16 +184,13 @@ pub fn load_model_config() {
             std::env::set_var("OPENAI_API_BASE", b);
         }
     }
-    if std::env::var("OPENAI_API_KEY").is_err() {
-        if let Some(k) = m.api_key {
-            std::env::set_var("OPENAI_API_KEY", k);
-        }
-    }
     if std::env::var("OPENAI_MODEL").is_err() {
         if let Some(md) = m.model {
             std::env::set_var("OPENAI_MODEL", md);
         }
     }
+    // F-10：API Key 不再注入进程全局环境变量（避免泄漏到子进程 / 插件环境）。
+    // 调用方应改用 `read_model_config()` 显式取用密钥。
 }
 
 /// 配置快照（启动时读取一次）。

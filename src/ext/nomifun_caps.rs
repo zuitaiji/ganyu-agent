@@ -246,7 +246,7 @@ pub fn register_nomifun_skills(book: &SkillBook) {
             description: cap.description.to_string(),
             steps: vec![SkillStep::Call {
                 tool: "nomifun_skill".to_string(),
-                arg: format!("cap={} {{input}}", cap.name),
+                arg: format!("cap={}\n{{input}}", cap.name),
             }],
         });
     }
@@ -393,11 +393,12 @@ impl Tool for NomifunSkillTool {
                 "输入须以 cap= 开头，例如：cap=code-review-assistant src/x.rs".into(),
             ));
         }
-        let rest = &s["cap=".len()..];
-        let (cap_name, user_input) = match rest.split_once(' ') {
-            Some((c, u)) => (c.to_string(), u.to_string()),
-            None => (rest.to_string(), String::new()),
+        // 能力名独占首行，用户输入在换行之后，杜绝用户输入覆盖能力名（防注入 F-07）。
+        let (head, user_input) = match s.split_once('\n') {
+            Some((h, b)) => (h.trim(), b),
+            None => (s.trim(), ""),
         };
+        let cap_name = &head["cap=".len()..];
         let cap = NOMIFUN_CAPS
             .iter()
             .find(|c| c.name == cap_name)
@@ -480,6 +481,16 @@ async fn dispatch_gateway(cmd: &str) -> GanyuResult<Value> {
 /// 不得含 shell 元字符、不得为绝对路径、不得含 `..` 穿越。
 fn is_safe_gateway_prog(prog: &str) -> bool {
     if prog.is_empty() || prog.contains("..") {
+        return false;
+    }
+    // F-08：禁止把 shell 解释器当网关程序——shell 可直接执行任意命令，违背白名单语义。
+    let lower = prog.to_lowercase();
+    if matches!(
+        lower.as_str(),
+        "sh" | "bash" | "cmd" | "powershell" | "pwsh" | "zsh" | "fish"
+            | "sh.exe" | "bash.exe" | "cmd.exe" | "powershell.exe" | "pwsh.exe"
+            | "zsh.exe" | "fish.exe"
+    ) {
         return false;
     }
     if prog.starts_with('/') || prog.starts_with('\\') || prog.contains(':') {

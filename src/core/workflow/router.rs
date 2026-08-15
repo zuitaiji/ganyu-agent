@@ -39,12 +39,17 @@ impl KeywordRouter {
 impl Router for KeywordRouter {
     fn route(&self, input: &str) -> String {
         let q = input.to_lowercase();
+        // 选择“最长匹配”的关键字，避免靠前的短关键字吞掉更具体的规则（F-14）。
+        let mut best: Option<(usize, String)> = None;
         for (kw, key) in &self.rules {
             if q.contains(kw) {
-                return key.clone();
+                let score = kw.chars().count();
+                if best.as_ref().map(|b| score > b.0).unwrap_or(true) {
+                    best = Some((score, key.clone()));
+                }
             }
         }
-        String::new()
+        best.map(|b| b.1).unwrap_or_default()
     }
 }
 

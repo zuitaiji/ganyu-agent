@@ -49,7 +49,9 @@ version = "0.4"
 optional = true
 
 [features]
-default = []
+# 默认开启 crypto/secret：密钥零化（secret）与记忆加密（crypto）默认可用，
+# 避免“忘了 --features hardened 就裸奔”（F-09）。network/shell/sandbox 仍按需显式开启。
+default = ["crypto", "secret"]
 network = ["dep:reqwest"]
 crypto = ["dep:aes-gcm", "dep:rand", "dep:sha2"]
 secret = ["dep:zeroize"]
