@@ -356,14 +356,18 @@ impl Tool for WebFetch {
     }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
         let url = input.as_str().trim();
-        // C5：出站前做 SSRF 防护（拒绝内网/环回/链路本地/云元数据等）。
-        security::ssrf_guard(url)?;
-        let client = reqwest::Client::builder()
+        // C5：出站前 SSRF 防护，并取得已校验 IP 列表（连接层固定，防 DNS 重绑定）。
+        let (host, ips) = security::ssrf_guard_resolve(url)?;
+        let mut builder = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(20))
             // 关闭自动重定向：避免 30x 跳转到内网绕过入口校验。
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .redirect(reqwest::redirect::Policy::none());
+        // 连接层闭环：把域名固定到已校验 IP，连接不再重新解析 DNS
+        // （否则攻击者可在 guard 校验后切换 DNS 记录指向内网）。
+        for ip in ips {
+            builder = builder.resolve(&host, ip);
+        }
+        let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
         let resp = client
             .get(url)
             .send()

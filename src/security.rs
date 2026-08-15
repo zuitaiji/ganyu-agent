@@ -110,16 +110,17 @@ fn canonicalize_or_create(p: &Path) -> GanyuResult<PathBuf> {
     }
 }
 
-/// C5：SSRF 防护。
+/// C5：SSRF 防护（入口校验 + 返回已校验 IP 供连接层固定，防 DNS 重绑定）。
 ///
 /// 在发起任何出站请求前调用。拒绝：
 /// - 非 `http`/`https` 协议；
 /// - 主机为空、含用户态信息（`@`）、或命中本机/内网/链路本地/云元数据域名；
 /// - 主机解析出的任一 IP 落在私有/保留网段（含 169.254.169.254 云元数据）。
 ///
-/// 注意：这是**尽力而为**的入口防护；真正的强隔离应在出口代理（egress proxy）做，
-/// 因 DNS 重绑定无法纯客户端彻底杜绝。故 `web_fetch` 同时关闭自动重定向并要求二次校验。
-pub fn ssrf_guard(url: &str) -> GanyuResult<()> {
+/// 返回 `(host, 已校验 IP 列表)`：调用方应把这些 IP 通过
+/// reqwest `ClientBuilder::resolve(host, ip)` 固定到连接层，
+/// 使连接不再重新解析 DNS —— 这是对 DNS 重绑定攻击的**连接层闭环**。
+pub fn ssrf_guard_resolve(url: &str) -> GanyuResult<(String, Vec<IpAddr>)> {
     let url = url.trim();
     // 拆分协议
     let (scheme, rest) = match url.split_once("://") {
@@ -183,6 +184,7 @@ pub fn ssrf_guard(url: &str) -> GanyuResult<()> {
     }
     // 字面 IP（用户直接写 IP）→ 一律按严格规则拒绝内网/保留段（无代理可绕过语义）。
     let literal_ip = host.parse::<IpAddr>().is_ok();
+    let mut verified: Vec<IpAddr> = Vec::with_capacity(candidates.len());
     for addr in &candidates {
         let ip: IpAddr = match addr.parse() {
             Ok(ip) => ip,
@@ -191,15 +193,8 @@ pub fn ssrf_guard(url: &str) -> GanyuResult<()> {
                 return Err(GanyuError::Ssrf(format!("地址解析异常：{addr}")));
             }
         };
-        // IPv4-mapped IPv6（::ffff:127.0.0.1 等）归一化为 IPv4 再判断，
-        // 否则 is_loopback/is_private 对 mapped 地址返回 false，可绕过 SSRF 直连内网。
-        let ip = match ip {
-            IpAddr::V6(v6) => v6
-                .to_ipv4_mapped()
-                .map(IpAddr::V4)
-                .unwrap_or(IpAddr::V6(v6)),
-            other => other,
-        };
+        // IPv4 内嵌 IPv6（mapped/compatible/6to4/NAT64 等）由 is_private_or_reserved
+        // 统一解出并按 IPv4 规则判断（见 embedded_ipv4），杜绝 `::ffff:127.0.0.1` 等绕过。
         if literal_ip && is_private_or_reserved(ip) {
             return Err(GanyuError::Ssrf(format!(
                 "拒绝字面内网/保留地址 {ip}（来自主机 {host}）"
@@ -212,8 +207,54 @@ pub fn ssrf_guard(url: &str) -> GanyuResult<()> {
                 "拒绝内网/保留地址 {ip}（来自主机 {host}）"
             )));
         }
+        verified.push(ip);
     }
-    Ok(())
+    Ok((host, verified))
+}
+
+/// 入口校验（不返回 IP，兼容仅校验用途）。
+pub fn ssrf_guard(url: &str) -> GanyuResult<()> {
+    ssrf_guard_resolve(url).map(|_| ())
+}
+
+/// 从 IPv6 中解出内嵌的 IPv4 地址。覆盖：
+/// - IPv4-mapped `::ffff:a.b.c.d`（RFC 4291，最常见）；
+/// - IPv4-compatible `::a.b.c.d`（RFC 4291 已弃用，部分栈仍支持）；
+/// - 6to4 `2002:V4ADDR::/32`（RFC 3056，隧道可解封装到内网 IPv4）；
+/// - NAT64 `64:ff9b::/96`（RFC 6052，经网关翻译到 IPv4）。
+/// 若命中以上任一前缀则返回解出的 IPv4，供 `is_private_or_reserved` 按 IPv4 规则判断。
+fn embedded_ipv4(v6: &std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
+    if let Some(v4) = v6.to_ipv4_mapped() {
+        return Some(v4);
+    }
+    let s = v6.segments();
+    // IPv4-compatible：前 96 位全 0 且低 32 位非 0（0 为本机 :: 表示，1 为 loopback ::1）
+    if s[0] == 0 && s[1] == 0 && s[2] == 0 && s[3] == 0 && s[4] == 0 && s[5] == 0 {
+        let lo = ((s[6] as u32) << 16) | (s[7] as u32);
+        if lo != 0 && lo != 1 {
+            return Some(std::net::Ipv4Addr::from(lo));
+        }
+        return None;
+    }
+    // 6to4：2002:V4ADDR:...（V4ADDR 为第 2、3 段）
+    if s[0] == 0x2002 {
+        return Some(std::net::Ipv4Addr::new(
+            (s[1] >> 8) as u8,
+            (s[1] & 0xff) as u8,
+            (s[2] >> 8) as u8,
+            (s[2] & 0xff) as u8,
+        ));
+    }
+    // NAT64：64:ff9b::/96（低 32 位为 IPv4）
+    if s[0] == 0x64 && s[1] == 0xff9b && s[2] == 0 && s[3] == 0 && s[4] == 0 && s[5] == 0 {
+        return Some(std::net::Ipv4Addr::new(
+            (s[6] >> 8) as u8,
+            (s[6] & 0xff) as u8,
+            (s[7] >> 8) as u8,
+            (s[7] & 0xff) as u8,
+        ));
+    }
+    None
 }
 
 /// 代理 fake-ip 虚拟地址段：IPv4 198.18.0.0/15、IPv6 fdfe:dcba:9876::/48（Clash 默认虚拟前缀）。
@@ -258,47 +299,24 @@ pub fn sanitize_model_output(s: &str) -> GanyuResult<String> {
 /// 判断 IP 是否落在私有/环回/链路本地/保留网段（SSRF 防护用）。
 pub fn is_private_or_reserved(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(a) => {
-            let o = a.octets();
-            // 0.0.0.0/8 本网络
-            if o[0] == 0 {
-                return true;
-            }
-            // 10.0.0.0/8
-            if o[0] == 10 {
-                return true;
-            }
-            // 127.0.0.0/8 环回
-            if o[0] == 127 {
-                return true;
-            }
-            // 169.254.0.0/16 链路本地（含 169.254.169.254 云元数据）
-            if o[0] == 169 && o[1] == 254 {
-                return true;
-            }
-            // 172.16.0.0/12
-            if o[0] == 172 && (o[1] >= 16 && o[1] <= 31) {
-                return true;
-            }
-            // 192.168.0.0/16
-            if o[0] == 192 && o[1] == 168 {
-                return true;
-            }
-            // 100.64.0.0/10 CGNAT
-            if o[0] == 100 && (o[1] >= 64 && o[1] <= 127) {
-                return true;
-            }
-            // 192.0.0.0/24 / 192.0.2.0/24 / 198.18.0.0/15 / 198.51.100.0/24 / 203.0.113.0/24 等文档/保留段
-            if o[0] == 192 && o[1] == 0 && o[2] == 0 {
-                return true;
-            }
-            if o[0] == 198 && (o[1] == 18 || o[1] == 19) {
-                return true;
-            }
-            false
-        }
+        IpAddr::V4(a) => is_private_v4(a),
         IpAddr::V6(a) => {
             if a.is_loopback() || a.is_unspecified() || a.is_unicast_link_local() {
+                return true;
+            }
+            // IPv4 内嵌（mapped/compatible/6to4/NAT64）→ 解出后按 IPv4 规则判断。
+            // 这是 SSRF 防绕过的关键：`::ffff:127.0.0.1` 等不落入任何 IPv6 保留段，
+            // 但连接时会被栈翻译/解封装为内网 IPv4。
+            if let Some(v4) = embedded_ipv4(&a) {
+                return is_private_v4(v4);
+            }
+            let s = a.segments();
+            // Teredo 隧道前缀 2001::/32（RFC 4380，可封装指向内网）
+            if s[0] == 0x2001 && s[1] == 0 {
+                return true;
+            }
+            // 文档段 2001:db8::/32（RFC 3849）
+            if s[0] == 0x2001 && s[1] == 0xdb8 {
                 return true;
             }
             // 唯一本地地址 fc00::/7
@@ -308,6 +326,46 @@ pub fn is_private_or_reserved(ip: IpAddr) -> bool {
             false
         }
     }
+}
+
+fn is_private_v4(a: std::net::Ipv4Addr) -> bool {
+    let o = a.octets();
+    // 0.0.0.0/8 本网络
+    if o[0] == 0 {
+        return true;
+    }
+    // 10.0.0.0/8
+    if o[0] == 10 {
+        return true;
+    }
+    // 127.0.0.0/8 环回
+    if o[0] == 127 {
+        return true;
+    }
+    // 169.254.0.0/16 链路本地（含 169.254.169.254 云元数据）
+    if o[0] == 169 && o[1] == 254 {
+        return true;
+    }
+    // 172.16.0.0/12
+    if o[0] == 172 && (o[1] >= 16 && o[1] <= 31) {
+        return true;
+    }
+    // 192.168.0.0/16
+    if o[0] == 192 && o[1] == 168 {
+        return true;
+    }
+    // 100.64.0.0/10 CGNAT
+    if o[0] == 100 && (o[1] >= 64 && o[1] <= 127) {
+        return true;
+    }
+    // 192.0.0.0/24 / 192.0.2.0/24 / 198.18.0.0/15 / 198.51.100.0/24 / 203.0.113.0/24 等文档/保留段
+    if o[0] == 192 && o[1] == 0 && o[2] == 0 {
+        return true;
+    }
+    if o[0] == 198 && (o[1] == 18 || o[1] == 19) {
+        return true;
+    }
+    false
 }
 
 /// 把不可信外部数据（工具输出 / 其它 agent 产出 / 历史轨迹）包裹成显式边界，
@@ -343,7 +401,27 @@ mod tests {
         // IPv4-mapped IPv6 不得绕过（::ffff:127.0.0.1 即 127.0.0.1）
         assert!(ssrf_guard("http://[::ffff:127.0.0.1]:8080/").is_err());
         assert!(ssrf_guard("http://[::ffff:169.254.169.254]/latest/").is_err());
+        // IPv4-compatible（RFC 4291 弃用，部分栈仍支持连接）
+        assert!(ssrf_guard("http://[::127.0.0.1]:8080/").is_err());
+        // 6to4 隧道解封装到内网
+        assert!(ssrf_guard("http://[2002:7f00:1::1]/").is_err());
+        // NAT64 网关翻译到内网
+        assert!(ssrf_guard("http://[64:ff9b::7f00:1]/").is_err());
+        // Teredo 隧道前缀
+        assert!(ssrf_guard("http://[2001::7f00:1]/").is_err());
+        // 6to4 封装公网地址（2002:0101:0101::/32 = 1.1.1.1）→ 放行
+        assert!(ssrf_guard("http://[2002:101:101::1]/").is_ok());
         // 使用公网 IP 字面量（无需 DNS），离线环境也可验证放行路径。
         assert!(ssrf_guard("http://1.1.1.1/").is_ok());
+    }
+
+    #[test]
+    fn ssrf_resolve_returns_verified_ips() {
+        // 公网字面 IP：返回 host 与校验通过的 IP 列表（供连接层 resolve 固定）。
+        let (host, ips) = ssrf_guard_resolve("http://1.1.1.1:8080/path").unwrap();
+        assert_eq!(host, "1.1.1.1");
+        assert!(ips.contains(&"1.1.1.1".parse().unwrap()));
+        // 内网一律不返回
+        assert!(ssrf_guard_resolve("http://[::ffff:192.168.1.1]/").is_err());
     }
 }
