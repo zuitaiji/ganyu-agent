@@ -185,8 +185,7 @@ impl Tool for ExecTool {
         true
     }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
+        use tokio::process::{Command, Stdio};
 
         // C1 失败闭环：即使 `shell` 特性已编译，运行时仍需显式开启才放行。
         if !security::shell_allowed() {
@@ -218,16 +217,31 @@ impl Tool for ExecTool {
         let mut child = cmd
             .spawn()
             .map_err(|e| GanyuError::ToolFailed("exec".into(), e.to_string()))?;
-        let _ = child.stdin.take().map(|mut s| s.write_all(b""));
-        let out = child
-            .wait_with_output()
-            .map_err(|e| GanyuError::ToolFailed("exec".into(), e.to_string()))?;
-        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        if !out.status.success() {
+        drop(child.stdin.take()); // 关闭 stdin（exec 参数即命令本身，无需输入）
+        // 超时等待，防命令卡死挂线程（30s）。
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            child.wait_with_output(),
+        )
+        .await
+        .map_err(|_| GanyuError::ToolFailed("exec".into(), "执行超时（30s 上限）".into()))?
+        .map_err(|e| GanyuError::ToolFailed("exec".into(), e.to_string()))?;
+        // 输出大小截断（防结果膨胀）：1MB 上限（按字符数，避免 UTF-8 边界 panic）。
+        const MAX_OUT: usize = 1024 * 1024;
+        let truncate = |v: Vec<u8>| -> String {
+            let s = String::from_utf8_lossy(&v).trim().to_string();
+            if s.chars().count() > MAX_OUT {
+                format!("{}…[已截断：输出超过 1MB 上限]", s.chars().take(MAX_OUT).collect::<String>())
+            } else {
+                s
+            }
+        };
+        let stdout = truncate(output.stdout);
+        let stderr = truncate(output.stderr);
+        if !output.status.success() {
             return Err(GanyuError::ToolFailed(
                 "exec".into(),
-                format!("exit {}: {}", out.status, stderr),
+                format!("exit {}: {}", output.status, stderr),
             ));
         }
         Ok(Value(if stderr.is_empty() {
@@ -363,10 +377,23 @@ impl Tool for WebFetch {
                 return Err(GanyuError::Ssrf("非法重定向（缺 Location）".into()));
             }
         }
-        let text = resp
+        // 响应体大小限制（防内存洪泛 DoS）：Content-Length 预检 + 实际读取后截断。
+        const MAX_BODY: u64 = 10 * 1024 * 1024; // 10MB
+        if let Some(len) = resp.content_length() {
+            if len > MAX_BODY {
+                return Err(GanyuError::Http(format!(
+                    "响应体过大（{len} 字节，上限 {MAX_BODY}）"
+                )));
+            }
+        }
+        let mut text = resp
             .text()
             .await
             .map_err(|e| GanyuError::Http(e.to_string()))?;
+        if text.len() as u64 > MAX_BODY {
+            text.truncate(MAX_BODY as usize);
+            text.push_str("\n…[已截断：响应体超过 10MB 上限]");
+        }
         Ok(Value(text))
     }
 }
@@ -379,32 +406,36 @@ fn regex_fullmatch(pat: &str, s: &str) -> bool {
 
 /// 极简安全算术求值（仅 + - * / 与括号，f64）。无第三方依赖。
 fn eval_expr(s: &str) -> GanyuResult<f64> {
+    const MAX_DEPTH: usize = 64;
     let chars: Vec<char> = s.chars().filter(|c| !c.is_whitespace()).collect();
     let mut pos = 0usize;
 
-    fn parse_expr(chars: &[char], pos: &mut usize) -> GanyuResult<f64> {
-        let mut left = parse_term(chars, pos)?;
+    fn parse_expr(chars: &[char], pos: &mut usize, depth: usize) -> GanyuResult<f64> {
+        if depth > MAX_DEPTH {
+            return Err(GanyuError::ToolFailed("calc".into(), "表达式嵌套过深".into()));
+        }
+        let mut left = parse_term(chars, pos, depth)?;
         while *pos < chars.len() {
             match chars[*pos] {
                 '+' => {
                     *pos += 1;
-                    left += parse_term(chars, pos)?;
+                    left += parse_term(chars, pos, depth)?;
                 }
                 '-' => {
                     *pos += 1;
-                    left -= parse_term(chars, pos)?;
+                    left -= parse_term(chars, pos, depth)?;
                 }
                 _ => break,
             }
         }
         Ok(left)
     }
-    fn parse_term(chars: &[char], pos: &mut usize) -> GanyuResult<f64> {
-        let mut left = parse_factor(chars, pos)?;
+    fn parse_term(chars: &[char], pos: &mut usize, depth: usize) -> GanyuResult<f64> {
+        let mut left = parse_factor(chars, pos, depth)?;
         while *pos < chars.len() && (chars[*pos] == '*' || chars[*pos] == '/') {
             let op = chars[*pos];
             *pos += 1;
-            let right = parse_factor(chars, pos)?;
+            let right = parse_factor(chars, pos, depth)?;
             if op == '*' {
                 left *= right;
             } else {
@@ -416,14 +447,14 @@ fn eval_expr(s: &str) -> GanyuResult<f64> {
         }
         Ok(left)
     }
-    fn parse_factor(chars: &[char], pos: &mut usize) -> GanyuResult<f64> {
+    fn parse_factor(chars: &[char], pos: &mut usize, depth: usize) -> GanyuResult<f64> {
         if *pos < chars.len() && chars[*pos] == '-' {
             *pos += 1;
-            return Ok(-parse_factor(chars, pos)?);
+            return Ok(-parse_factor(chars, pos, depth)?);
         }
         if *pos < chars.len() && chars[*pos] == '(' {
             *pos += 1;
-            let v = parse_expr(chars, pos)?;
+            let v = parse_expr(chars, pos, depth + 1)?;
             if *pos < chars.len() && chars[*pos] == ')' {
                 *pos += 1;
             } else {
@@ -445,7 +476,7 @@ fn eval_expr(s: &str) -> GanyuResult<f64> {
             .map_err(|_| GanyuError::ToolFailed("calc".into(), "数字解析失败".into()))
     }
 
-    let r = parse_expr(&chars, &mut pos)?;
+    let r = parse_expr(&chars, &mut pos, 0)?;
     if pos != chars.len() {
         return Err(GanyuError::ToolFailed("calc".into(), "多余字符".into()));
     }

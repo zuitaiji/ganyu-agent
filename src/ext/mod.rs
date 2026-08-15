@@ -237,8 +237,8 @@ impl Tool for CommandTool {
         true
     }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
+        use tokio::io::AsyncWriteExt;
+        use tokio::process::{Command, Stdio};
 
         // 命令可带参数：按空白拆分为 program + args。
         let mut parts = self.command.split_whitespace();
@@ -255,22 +255,36 @@ impl Tool for CommandTool {
             .spawn()
             .map_err(|e| GanyuError::Plugin(format!("spawn {}: {e}", self.command)))?;
         if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(input.as_str().as_bytes())
-                .map_err(|e| GanyuError::Plugin(e.to_string()))?;
+            let data = input.as_str().as_bytes().to_vec();
+            tokio::spawn(async move {
+                let _ = stdin.write_all(&data).await;
+                let _ = stdin.flush().await;
+            });
         }
-        let out = child
-            .wait_with_output()
-            .map_err(|e| GanyuError::Plugin(e.to_string()))?;
-        if !out.status.success() {
+        // 超时等待，防插件命令卡死挂线程（30s）。
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            child.wait_with_output(),
+        )
+        .await
+        .map_err(|_| GanyuError::Plugin(format!("{} 执行超时（30s 上限）", self.command)))?
+        .map_err(|e| GanyuError::Plugin(e.to_string()))?;
+        if !output.status.success() {
             return Err(GanyuError::Plugin(format!(
                 "{} exit {}: {}",
                 self.command,
-                out.status,
-                String::from_utf8_lossy(&out.stderr)
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
             )));
         }
-        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        // 输出截断（防结果膨胀，1MB 上限）
+        let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        const MAX_OUT: usize = 1024 * 1024;
+        let text = if s.chars().count() > MAX_OUT {
+            format!("{}…[已截断：输出超过 1MB 上限]", s.chars().take(MAX_OUT).collect::<String>())
+        } else {
+            s
+        };
         Ok(Value(text))
     }
 }

@@ -440,7 +440,7 @@ impl Tool for NomifunSkillTool {
 
 /// 经网关程序派发（程序名受安全约束，拒绝绝对路径/盘符/穿越/元字符）。
 async fn dispatch_gateway(cmd: &str) -> GanyuResult<Value> {
-    use std::process::{Command, Stdio};
+    use tokio::process::{Command, Stdio};
 
     let mut parts = cmd.split_whitespace();
     let prog = parts.next().ok_or_else(|| {
@@ -453,28 +453,47 @@ async fn dispatch_gateway(cmd: &str) -> GanyuResult<Value> {
         ));
     }
     let args: Vec<&str> = parts.collect();
-    let out = Command::new(prog)
+    let mut child = Command::new(prog)
         .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
+        .spawn()
         .map_err(|e| {
             GanyuError::ToolFailed("nomifun_skill".into(), format!("网关执行失败：{e}"))
         })?;
-    if !out.status.success() {
+    drop(child.stdin.take());
+    // 超时等待，防网关程序卡死挂线程（30s）。
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        child.wait_with_output(),
+    )
+    .await
+    .map_err(|_| {
+        GanyuError::ToolFailed("nomifun_skill".into(), "网关执行超时（30s 上限）".into())
+    })?
+    .map_err(|e| {
+        GanyuError::ToolFailed("nomifun_skill".into(), format!("网关执行失败：{e}"))
+    })?;
+    if !output.status.success() {
         return Err(GanyuError::ToolFailed(
             "nomifun_skill".into(),
             format!(
                 "网关退出 {}: {}",
-                out.status,
-                String::from_utf8_lossy(&out.stderr)
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
             ),
         ));
     }
-    Ok(Value(
-        String::from_utf8_lossy(&out.stdout).trim().to_string(),
-    ))
+    // 输出截断（防结果膨胀，1MB 上限）
+    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    const MAX_OUT: usize = 1024 * 1024;
+    let text = if s.chars().count() > MAX_OUT {
+        format!("{}…[已截断：输出超过 1MB 上限]", s.chars().take(MAX_OUT).collect::<String>())
+    } else {
+        s
+    };
+    Ok(Value(text))
 }
 
 /// C2：网关程序名必须是「安全 token」——仅字母数字/点/下划线/相对分隔符，

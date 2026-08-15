@@ -191,6 +191,15 @@ pub fn ssrf_guard(url: &str) -> GanyuResult<()> {
                 return Err(GanyuError::Ssrf(format!("地址解析异常：{addr}")));
             }
         };
+        // IPv4-mapped IPv6（::ffff:127.0.0.1 等）归一化为 IPv4 再判断，
+        // 否则 is_loopback/is_private 对 mapped 地址返回 false，可绕过 SSRF 直连内网。
+        let ip = match ip {
+            IpAddr::V6(v6) => v6
+                .to_ipv4_mapped()
+                .map(IpAddr::V4)
+                .unwrap_or(IpAddr::V6(v6)),
+            other => other,
+        };
         if literal_ip && is_private_or_reserved(ip) {
             return Err(GanyuError::Ssrf(format!(
                 "拒绝字面内网/保留地址 {ip}（来自主机 {host}）"
@@ -331,6 +340,9 @@ mod tests {
         assert!(ssrf_guard("http://169.254.169.254/latest/").is_err());
         assert!(ssrf_guard("http://192.168.1.1/").is_err());
         assert!(ssrf_guard("file:///etc/passwd").is_err());
+        // IPv4-mapped IPv6 不得绕过（::ffff:127.0.0.1 即 127.0.0.1）
+        assert!(ssrf_guard("http://[::ffff:127.0.0.1]:8080/").is_err());
+        assert!(ssrf_guard("http://[::ffff:169.254.169.254]/latest/").is_err());
         // 使用公网 IP 字面量（无需 DNS），离线环境也可验证放行路径。
         assert!(ssrf_guard("http://1.1.1.1/").is_ok());
     }

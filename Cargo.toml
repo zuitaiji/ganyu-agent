@@ -5,7 +5,7 @@ edition = "2021"
 description = "有温度、能自进化、可拓展、可自愈的完备 agent 系统（Rust）。会话UUID + 统一字符串值 + 抽象层。"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "sync", "process"] }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
