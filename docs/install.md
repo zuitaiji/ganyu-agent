@@ -15,8 +15,18 @@ iex (irm https://raw.githubusercontent.com/zuitaiji/ganyu-agent/main/install.ps1
 脚本行为（默认免编译）：GitHub API 查最新 release → 下载对应平台资产 → 解压到
 `<prefix>/bin` → selftest 自检 → 创建 `ganyu` 别名 → PATH 提示。幂等：重复执行覆盖升级，不动 config.toml 与记忆文件。
 
-参数：`--version`（默认 latest，或 v0.1.0）、`--prefix`（sh 默认 `~/.local`，ps1 默认 `~\.ganyu`）、
-`--no-alias`。**指定 `--features hardened` 时回退源码编译**（本地有仓库用本地源码，否则 clone），适合要定制特性的开发者。
+参数（定制用）：
+- **install.sh**：`bash install.sh --version v0.1.7 --prefix ~/.local --no-alias`；
+  **指定 `--features hardened` 时回退源码编译**（本地有仓库用本地源码，否则 clone），适合要定制特性的开发者。
+- **install.ps1**（`iex (irm ...)` 单行执行不支持脚本级参数，用环境变量）：
+  ```powershell
+  $env:GANYU_FEATURES = "hardened"   # 指定后回退 cargo 编译
+  $env:GANYU_PREFIX   = "D:\ganyu"   # 安装前缀（默认 %USERPROFILE%\.ganyu）
+  $env:GANYU_VERSION  = "v0.1.7"     # release 版本（默认 latest）
+  $env:GANYU_DEV = "1"               # 源码编译用 dev profile
+  $env:GANYU_NOALIAS = "1"           # 跳过别名
+  iex (irm https://raw.githubusercontent.com/zuitaiji/ganyu-agent/main/install.ps1)
+  ```
 
 ## 2. cargo install（开发者/CI）
 

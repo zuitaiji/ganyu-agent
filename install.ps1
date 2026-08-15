@@ -7,23 +7,31 @@
 # 行为：
 #   - 默认【免编译】：从 GitHub Releases 下载预编译二进制（hardened 特性），
 #     装到独立目录 $Prefix（默认 ~/.ganyu），零 Rust 依赖，删目录即卸载。
-#   - 指定 -Features 时回退【源码编译】：本地有仓库用本地源码，否则 clone，
+#   - 指定 GANYU_FEATURES 时回退【源码编译】：本地有仓库用本地源码，否则 clone，
 #     适合要定制特性的开发者。
 #   - 幂等：重复执行覆盖升级二进制，不动 ~/.ganyu/config.toml 与记忆文件。
 #   - 自带 selftest 自检 + 别名 ganyu.exe + PATH 提示。
+#
+# 参数（iex (irm ...) 单行执行不支持脚本级 param()，故用环境变量）：
+#   GANYU_VERSION    release 版本（默认 latest）
+#   GANYU_PREFIX     安装前缀（默认 %USERPROFILE%\.ganyu）
+#   GANYU_FEATURES   指定后走 cargo 编译（如 "hardened"）
+#   GANYU_REPO / GANYU_BRANCH   源码编译时的仓库与分支
+#   GANYU_DEV=1      源码编译用 dev profile（快，未优化）
+#   GANYU_NOALIAS=1  跳过别名创建
+# 例：$env:GANYU_FEATURES="hardened"; iex (irm https://raw.githubusercontent.com/zuitaiji/ganyu-agent/main/install.ps1)
 # ============================================================================
-[CmdletBinding()]
-param(
-  [string]$Version = "latest",     # release 版本：latest 或 v0.1.0
-  [string]$Prefix = "",            # 安装前缀，默认 $HOME\.ganyu
-  [string]$Features = "",          # 指定后走 cargo 编译（如 "hardened"）
-  [string]$Repo = "https://github.com/zuitaiji/ganyu-agent",
-  [string]$Branch = "main",
-  [switch]$Dev,                    # 源码编译时用 dev profile（快，未优化）
-  [switch]$NoAlias
-)
-
 $ErrorActionPreference = "Stop"
+
+# ---- 参数：环境变量注入（兼容 iex 单行执行） -------------------------------
+$Version  = if ($env:GANYU_VERSION)  { $env:GANYU_VERSION }  else { "latest" }
+$Prefix   = if ($env:GANYU_PREFIX)   { $env:GANYU_PREFIX }   else { "" }
+$Features = if ($env:GANYU_FEATURES) { $env:GANYU_FEATURES } else { "" }
+$Repo     = if ($env:GANYU_REPO)     { $env:GANYU_REPO }     else { "https://github.com/zuitaiji/ganyu-agent" }
+$Branch   = if ($env:GANYU_BRANCH)   { $env:GANYU_BRANCH }   else { "main" }
+$Dev      = $env:GANYU_DEV -eq "1"
+$NoAlias  = $env:GANYU_NOALIAS -eq "1"
+
 if (-not $Prefix) { $Prefix = Join-Path $HOME ".ganyu" }
 $binDir = Join-Path $Prefix "bin"
 $binPath = Join-Path $binDir "ganyu-agent.exe"
