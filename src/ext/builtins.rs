@@ -365,7 +365,7 @@ impl Tool for WebFetch {
         // 连接层闭环：把域名固定到已校验 IP，连接不再重新解析 DNS
         // （否则攻击者可在 guard 校验后切换 DNS 记录指向内网）。
         for ip in ips {
-            builder = builder.resolve(&host, ip);
+            builder = builder.resolve(&host, std::net::SocketAddr::new(ip, 0));
         }
         let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
         let resp = client
