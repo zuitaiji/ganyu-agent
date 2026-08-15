@@ -162,7 +162,16 @@ async fn main() -> GanyuResult<()> {
     let base = std::env::var("OPENAI_API_BASE").ok().or(mcfg.0);
     let key = std::env::var("OPENAI_API_KEY").ok().or(mcfg.1);
     let model = std::env::var("OPENAI_MODEL").ok().or(mcfg.2);
-    if let (Some(base), Some(key)) = (base, key) {
+    // 统一凭据标志：供 reasoner 选择 / doctor / chat 提示复用（F-10 后 env 未必注入，须含 config 兜底）。
+    let has_creds = base
+        .as_deref()
+        .map(|b| !b.trim().is_empty())
+        .unwrap_or(false)
+        && key
+            .as_deref()
+            .map(|k| !k.trim().is_empty())
+            .unwrap_or(false);
+    if let (Some(base), Some(key)) = (base.clone(), key.clone()) {
         // 模型名可用 OPENAI_MODEL 覆盖（默认 gpt-4o-mini；OpenAI 兼容端点均可）。
         let model = model.unwrap_or_else(|| "gpt-4o-mini".to_string());
         #[cfg(feature = "network")]
@@ -208,11 +217,8 @@ async fn main() -> GanyuResult<()> {
     let gateway_arc = Arc::new(gateway);
     #[cfg(feature = "network")]
     let reasoner: Arc<dyn ganyu_agent::core::loop_::Reasoner> = {
-        // F-10：API Key 不注入全局 env（防泄漏子进程），key 从 env 或 config.toml 取。
-        let key_ok = std::env::var("OPENAI_API_KEY").is_ok()
-            || ganyu_agent::config::read_model_config().1.is_some();
-        let has_model = std::env::var("OPENAI_API_BASE").is_ok() && key_ok;
-        if has_model {
+        // F-10：API Key 不注入全局 env，凭据统一用 has_creds（env 或 config.toml）。
+        if has_creds {
             Arc::new(LlmReasoner::new(gateway_arc.clone()))
         } else {
             Arc::new(LocalReasoner)
@@ -327,11 +333,13 @@ async fn main() -> GanyuResult<()> {
                     "缺失（可写 [model] 段一键接入模型）"
                 }
             );
-            let base = std::env::var("OPENAI_API_BASE").unwrap_or_default();
-            // F-10：key 不注入全局 env，从 env 或 config.toml 取
-            let key_set = std::env::var("OPENAI_API_KEY").is_ok()
-                || ganyu_agent::config::read_model_config().1.is_some();
-            let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini(默认)".into());
+            let base = base.clone().unwrap_or_default();
+            // F-10：key 不注入全局 env，统一用 has_creds（env 或 config.toml）
+            let key_set = has_creds;
+            let model = std::env::var("OPENAI_MODEL")
+                .ok()
+                .or_else(|| ganyu_agent::config::read_model_config().2)
+                .unwrap_or_else(|| "gpt-4o-mini(默认)".into());
             println!(
                 "模型配置 : base={} key={} model={}",
                 if base.is_empty() { "(未设置)" } else { &base },
@@ -868,11 +876,9 @@ async fn main() -> GanyuResult<()> {
                 // 交互式 REPL（对标 OpenClaw / Hermes 的对话体验）：
                 // 多轮对话共享同一会话，记忆/上下文跨轮延续；输入 /quit 或 Ctrl+C 退出。
                 println!("ganyu-agent 交互对话已启动（同一会话延续上下文；输入 /quit 或 Ctrl+C 退出）");
-                // F-10：key 不注入全局 env，从 env 或 config.toml 取
-                let key_ok = std::env::var("OPENAI_API_KEY").is_ok()
-                    || ganyu_agent::config::read_model_config().1.is_some();
-                if std::env::var("OPENAI_API_BASE").is_err() || !key_ok {
-                    println!("⚠️ 未配置模型（当前为离线本地兜底）。编辑 ~/.ganyu/config.toml 的 [model] 段，或运行 ganyu-agent doctor 查看指引。");
+                // F-10：凭据统一用 has_creds（env 或 config.toml）
+                if !has_creds {
+                    println!("⚠️ 未配置模型（当前为离线本地兜底）。编辑 ~/.ganyu/config.toml 的 [model] 段，或运行 ganyu setup 配置，或 ganyu-agent doctor 查看指引。");
                 } else {
                     println!("💡 已连接模型：{}", std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "默认".into()));
                 }
