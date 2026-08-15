@@ -185,7 +185,8 @@ impl Tool for ExecTool {
         true
     }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
-        use tokio::process::{Command, Stdio};
+        use tokio::process::Command;
+        use std::process::Stdio;
 
         // C1 失败闭环：即使 `shell` 特性已编译，运行时仍需显式开启才放行。
         if !security::shell_allowed() {

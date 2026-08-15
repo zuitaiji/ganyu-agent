@@ -440,7 +440,8 @@ impl Tool for NomifunSkillTool {
 
 /// 经网关程序派发（程序名受安全约束，拒绝绝对路径/盘符/穿越/元字符）。
 async fn dispatch_gateway(cmd: &str) -> GanyuResult<Value> {
-    use tokio::process::{Command, Stdio};
+    use tokio::process::Command;
+    use std::process::Stdio;
 
     let mut parts = cmd.split_whitespace();
     let prog = parts.next().ok_or_else(|| {

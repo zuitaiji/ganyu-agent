@@ -238,7 +238,8 @@ impl Tool for CommandTool {
     }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
         use tokio::io::AsyncWriteExt;
-        use tokio::process::{Command, Stdio};
+        use tokio::process::Command;
+        use std::process::Stdio;
 
         // 命令可带参数：按空白拆分为 program + args。
         let mut parts = self.command.split_whitespace();
