@@ -46,12 +46,16 @@ pub struct LocalMemory {
     store: tokio::sync::Mutex<HashMap<String, Value>>,
     #[cfg(feature = "crypto")]
     cipher: Option<Cipher>,
+    /// 加密记忆无法解密（密钥缺失/错误）时置位：`save` 将跳过，
+    /// 保护原密文文件不被空库静默覆盖（密钥输错 ≠ 记忆清零）。
+    load_failed: bool,
 }
 
 impl LocalMemory {
     pub fn new(path: impl AsRef<Path>) -> Self {
         let path = path.as_ref().to_path_buf();
         let raw = std::fs::read_to_string(&path).ok();
+        let mut load_failed = false;
         let store = match raw {
             Some(s) if s.starts_with("ENC1:") => {
                 // 密文：仅在 crypto 特性下尝试解密；否则视作不可读，从空库起步。
@@ -61,14 +65,21 @@ impl LocalMemory {
                         match cipher.decrypt(&s) {
                             Some(pt) => serde_json::from_str::<HashMap<String, Value>>(&pt)
                                 .unwrap_or_default(),
-                            None => HashMap::new(),
+                            None => {
+                                // 密钥错误：不覆盖原文件（P2）
+                                load_failed = true;
+                                HashMap::new()
+                            }
                         }
                     } else {
+                        // 密文存在但无 GANYU_MEM_KEY：保护原文件（P2）
+                        load_failed = true;
                         HashMap::new()
                     }
                 }
                 #[cfg(not(feature = "crypto"))]
                 {
+                    load_failed = true;
                     HashMap::new()
                 }
             }
@@ -80,10 +91,15 @@ impl LocalMemory {
             store: tokio::sync::Mutex::new(store),
             #[cfg(feature = "crypto")]
             cipher: Cipher::from_env(),
+            load_failed,
         }
     }
 
     async fn save(&self) {
+        // 加密记忆无法解密时绝不覆盖原文件（P2：密钥输错 ≠ 记忆清零）
+        if self.load_failed {
+            return;
+        }
         let snapshot = {
             let g = self.store.lock().await;
             (*g).clone()
@@ -460,6 +476,40 @@ mod tests {
         let m2 = LocalMemory::new(path);
         let got = m2.get("viking://secret").await.unwrap();
         assert_eq!(got, Some(Value("topsecret".into())));
+        let _ = std::fs::remove_file(path);
+        std::env::remove_var("GANYU_MEM_KEY");
+    }
+
+    #[cfg(feature = "crypto")]
+    #[tokio::test]
+    async fn wrong_key_never_overwrites_encrypted_file() {
+        // P2：密钥错误时 put 不得把加密记忆库静默覆盖为空库（防永久丢失）。
+        let path = ".ganyu_test_wrongkey.json";
+        let _ = std::fs::remove_file(path);
+        std::env::set_var("GANYU_MEM_KEY", "key-a");
+        {
+            let m = LocalMemory::new(path);
+            m.put("viking://user/memory/x", &Value("secret".into()))
+                .await
+                .unwrap();
+        }
+        let encrypted = std::fs::read_to_string(path).unwrap();
+        assert!(encrypted.starts_with("ENC1:"));
+        // 换错误密钥：读取失败 → load_failed → put 不落盘
+        std::env::set_var("GANYU_MEM_KEY", "key-b");
+        {
+            let m2 = LocalMemory::new(path);
+            m2.put("viking://user/memory/y", &Value("other".into()))
+                .await
+                .unwrap();
+        }
+        let after = std::fs::read_to_string(path).unwrap();
+        assert_eq!(encrypted, after, "密钥错误时不得覆盖加密记忆文件");
+        // 恢复正确密钥仍可还原原数据
+        std::env::set_var("GANYU_MEM_KEY", "key-a");
+        let m3 = LocalMemory::new(path);
+        let got = m3.get("viking://user/memory/x").await.unwrap();
+        assert_eq!(got, Some(Value("secret".into())));
         let _ = std::fs::remove_file(path);
         std::env::remove_var("GANYU_MEM_KEY");
     }
