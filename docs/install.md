@@ -60,7 +60,26 @@ ganyu-agent chat            # 或 ganyu
 ```
 > 配置后 `run`/`agent`/`sag` 也自动走真实模型；未配置则离线本地兜底（功能不缺失）。
 
-## 5. 特性矩阵
+## 5. 卸载（三平台）
+
+> 程序装于独立前缀目录，**删 bin 即卸载**，不动 config.toml 与记忆文件；
+> 想彻底清除（含配置与记忆）再删前缀目录。默认前缀：Windows `~\.ganyu`，Linux/macOS `~/.local`。
+
+```bash
+# ---- Linux / macOS（install.sh 默认前缀 ~/.local）----
+rm -f ~/.local/bin/ganyu-agent ~/.local/bin/ganyu          # 卸程序（精确删，勿删整个 ~/.local）
+rm -rf ~/.local/.ganyu*                                    # 可选：清测试残留
+# 彻底清除（含 ~/.ganyu/config.toml 与记忆，重装需重新 setup）：
+rm -rf ~/.ganyu ~/.local/.ganyu*
+
+# ---- Windows（PowerShell）----
+Remove-Item "$HOME\.ganyu\bin" -Recurse -Force              # 卸程序，保留 config/记忆
+Remove-Item "$HOME\.ganyu" -Recurse -Force                  # 彻底清除（先备份 config.toml 的 API key）
+```
+
+> 自定义了 `GANYU_PREFIX`/`PREFIX` 的，按实际前缀替换上面的路径。
+
+## 6. 特性矩阵
 
 | 特性 | 能力 | 代价 |
 |------|------|------|

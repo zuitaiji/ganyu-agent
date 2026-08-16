@@ -37,7 +37,7 @@ use ganyu_agent::{GanyuError, GanyuResult};
 use std::collections::HashMap;
 
 /// 计算文件 SHA256（update 校验用）。用系统工具避免新增依赖：
-/// Windows `certutil -hashfile`，Linux/macOS `sha256sum`。
+/// Windows `certutil -hashfile`，Linux/macOS `sha256sum`（macOS 无 sha256sum，回退 `shasum -a 256`）。
 fn sha256_of_file(path: &Path) -> GanyuResult<String> {
     #[cfg(target_os = "windows")]
     {
@@ -56,10 +56,15 @@ fn sha256_of_file(path: &Path) -> GanyuResult<String> {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let out = std::process::Command::new("sha256sum")
-            .arg(path)
-            .output()
-            .map_err(GanyuError::Io)?;
+        // Linux 有 sha256sum；macOS 仅自带 shasum -a 256（输出格式同为 "hash  filename"）。
+        let out = match std::process::Command::new("sha256sum").arg(path).output() {
+            Ok(o) if o.status.success() => o,
+            _ => std::process::Command::new("shasum")
+                .args(["-a", "256"])
+                .arg(path)
+                .output()
+                .map_err(GanyuError::Io)?,
+        };
         let text = String::from_utf8_lossy(&out.stdout);
         Ok(text.split_whitespace().next().unwrap_or("").to_lowercase())
     }

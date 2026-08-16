@@ -81,9 +81,15 @@ if [[ -z "$GANYU_FEATURES" ]]; then
   curl -fsSL "$DL_URL" -o "$TMP/$ASSET"
 
   # 供应链校验：下载配套 .sha256 并对比（release 资产由 CI 生成）
+  # macOS 无 sha256sum（仅自带 shasum -a 256），两者输出格式一致（"hash  filename"）。
   echo "[install] 校验 sha256"
+  if command -v sha256sum >/dev/null 2>&1; then
+    CHECK="sha256sum -c"
+  else
+    CHECK="shasum -a 256 -c"
+  fi
   if curl -fsSL "$DL_URL.sha256" -o "$TMP/$ASSET.sha256" 2>/dev/null; then
-    if (cd "$TMP" && sha256sum -c "$ASSET.sha256") >/dev/null 2>&1; then
+    if (cd "$TMP" && $CHECK "$ASSET.sha256") >/dev/null 2>&1; then
       echo "[install] ✅ sha256 校验通过"
     else
       echo "[install] ❌ sha256 校验失败：资产可能被篡改！" >&2
