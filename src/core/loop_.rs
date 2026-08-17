@@ -69,11 +69,40 @@ impl Reasoner for LocalReasoner {
 /// （对齐 OpenClaw/Hermes 的 tool-calling 循环；ganyu 保持极简协议，避免依赖厂商 schema）。
 pub struct LlmReasoner {
     gateway: Arc<Gateway>,
+    /// 稳定 system 前缀缓存：(工具清单签名, system 消息)。
+    /// 工具集不变时复用同一条 system，保证模型侧前缀缓存（DeepSeek/Anthropic 自动
+    /// context caching）持续命中——对标 jcode 的「仅追加式上下文 + 固定系统提示」。
+    sys_cache: std::sync::Mutex<Option<(String, String)>>,
 }
 
 impl LlmReasoner {
     pub fn new(gateway: Arc<Gateway>) -> Self {
-        LlmReasoner { gateway }
+        LlmReasoner {
+            gateway,
+            sys_cache: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// 构建（并缓存）稳定 system 提示：
+    /// - 工具清单**排序**后固定拼接（HashSet 迭代顺序不稳定，必须排序保证前缀字节级稳定）；
+    /// - 模板固定，动态部分一律留在 user 消息（不污染缓存前缀）。
+    fn system_prompt(&self, known: &HashSet<String>) -> String {
+        let mut tools: Vec<String> = known.iter().cloned().collect();
+        tools.sort();
+        let sig = tools.join(",");
+        if let Some((cached_sig, cached_sys)) = self.sys_cache.lock().unwrap().as_ref() {
+            if *cached_sig == sig {
+                return cached_sys.clone();
+            }
+        }
+        let sys = format!(
+            "你是 ganyu 智能体的决策器。可用工具：{}。\
+             若需要调用工具，请严格以 '@工具名 参数' 开头输出（例如 @calc 1+1）；\
+             否则直接输出最终回答（不要输出 @ 开头的伪工具调用）。",
+            sig
+        );
+        *self.sys_cache.lock().unwrap() = Some((sig, sys.clone()));
+        sys
     }
 }
 
@@ -86,13 +115,9 @@ impl Reasoner for LlmReasoner {
         if let Some((tool, args, remaining)) = parse_known_tool(user_msg, known) {
             return Ok(Decision::Act { tool, args, remaining });
         }
-        let tools: Vec<String> = known.iter().cloned().collect();
-        let sys = format!(
-            "你是 ganyu 智能体的决策器。可用工具：{}。\
-             若需要调用工具，请严格以 '@工具名 参数' 开头输出（例如 @calc 1+1）；\
-             否则直接输出最终回答（不要输出 @ 开头的伪工具调用）。",
-            tools.join(", ")
-        );
+        // 稳定 system 前缀（排序工具清单 + 固定模板）→ 长会话模型侧前缀缓存命中。
+        // 消息序：[system(稳定前缀), user(增量)] —— 动态内容只在 user 段追加。
+        let sys = self.system_prompt(known);
         let messages = [
             Message::system(sys),
             Message::user(user_msg.to_string()),
@@ -222,6 +247,27 @@ fn default_fallback(msg: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routing::Gateway;
+    use std::sync::Arc;
+
+    #[test]
+    fn system_prompt_stable_across_order_and_calls() {
+        let r = LlmReasoner::new(Arc::new(Gateway::new()));
+        let mut a = HashSet::new();
+        a.insert("calc".to_string());
+        a.insert("echo".to_string());
+        a.insert("web_fetch".to_string());
+        let mut b = HashSet::new();
+        b.insert("web_fetch".to_string());
+        b.insert("echo".to_string());
+        b.insert("calc".to_string());
+        // 不同插入顺序 → 排序后相同前缀（缓存友好）
+        assert_eq!(r.system_prompt(&a), r.system_prompt(&b));
+        // 工具集变化 → 签名变化 → system 更新
+        let mut c = a.clone();
+        c.insert("exec".to_string());
+        assert_ne!(r.system_prompt(&a), r.system_prompt(&c));
+    }
 
     #[tokio::test]
     async fn local_reasoner_routes_tool() {
