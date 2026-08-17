@@ -119,10 +119,19 @@ else {
   }
   $featArgs = @("--features", $Features)
   if ($Dev) { $featArgs += "--debug" }
+  # 构建缓存统一目录（幂等升级增量编译）；可用 GANYU_CARGO_TARGET_DIR 覆盖。
   if (-not $env:GANYU_CARGO_TARGET_DIR) {
-    $env:GANYU_CARGO_TARGET_DIR = Join-Path $Prefix "target"
+    $env:GANYU_CARGO_TARGET_DIR = Join-Path $Prefix ".build-cache"
   }
   New-Item -ItemType Directory -Path $env:GANYU_CARGO_TARGET_DIR -Force | Out-Null
+  # 锁自愈：清除残留的 cargo 构建锁（写拦截/中断可能遗留），避免下次构建卡死。
+  foreach ($lf in @(
+    "$env:GANYU_CARGO_TARGET_DIR\.cargo-build-lock",
+    "$env:GANYU_CARGO_TARGET_DIR\.cargo-lock",
+    "$env:GANYU_CARGO_TARGET_DIR\release\.cargo-build-lock",
+    "$env:GANYU_CARGO_TARGET_DIR\release\.cargo-lock"
+  )) { if (Test-Path $lf) { Remove-Item $lf -Force -ErrorAction SilentlyContinue } }
+  Write-Host "[install] 构建缓存: $env:GANYU_CARGO_TARGET_DIR（升级将增量编译）"
   Write-Host "[install] cargo install --path '$src' --root '$Prefix' $(if ($Dev) {'[dev]'} else {'[release]'})"
   & cargo install --path $src --root $Prefix --locked @featArgs
   if ($LASTEXITCODE -ne 0) { Write-Error "cargo install 失败"; exit 1 }

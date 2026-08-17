@@ -104,6 +104,8 @@ Remove-Item "$HOME\.ganyu\bin\ganyu-agent.exe", "$HOME\.ganyu\bin\ganyu.exe" -Fo
 | 问题 | 处理 |
 |------|------|
 | 没有 cargo | 先装 rustup 再跑脚本 |
-| 安装慢 | 默认构建 ~30 crate；hardened 首次较久（之后增量） |
+| 安装慢 | 首次全量较久；**构建缓存统一在 `~/.ganyu/.build-cache`**，升级/多特性自动增量（秒~分钟级）；可 `GANYU_CARGO_TARGET_DIR` 自定义 |
+| 构建卡住/锁残留 | 脚本已内置锁自愈（自动清除 `.cargo-build-lock`）；仍卡可手动删缓存目录下锁文件 |
+| 构建加速（可选） | `source scripts/sccache-setup.sh` 启用 sccache（跨 target/特性共享编译产物） |
 | Windows 报毒 | 脚本仅执行 `cargo install` 与官方命令；可将 `~\.ganyu` 加 Defender 排除 |
 | 脚本被 PATH 同名劫持 | 在仓库目录内用 `./install.sh` |

@@ -1,0 +1,6 @@
+# ganyu-agent 构建优化（构建缓存方案 B）
+[build]
+incremental = true
+
+# 并行度：按机器核数调整（4/8/16）
+jobs = 8

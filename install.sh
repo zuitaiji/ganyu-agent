@@ -128,7 +128,17 @@ else
     git clone --depth 1 --branch "$GANYU_BRANCH" "$GANYU_REPO.git" "$TMP_SRC"
     SRC="$TMP_SRC"
   fi
-  TARGET_DIR="$(mktemp -d)/ganyu-target"
+  # 构建缓存统一目录（幂等升级增量编译）；可用 GANYU_CARGO_TARGET_DIR 覆盖。
+  if [[ -z "${GANYU_CARGO_TARGET_DIR:-}" ]]; then
+    TARGET_DIR="$HOME/.ganyu/.build-cache"
+  else
+    TARGET_DIR="$GANYU_CARGO_TARGET_DIR"
+  fi
+  mkdir -p "$TARGET_DIR"
+  # 锁自愈：清除残留的 cargo 构建锁（写拦截/中断可能遗留），避免下次构建卡死。
+  rm -f "$TARGET_DIR/.cargo-build-lock" "$TARGET_DIR/.cargo-lock" \
+        "$TARGET_DIR/release/.cargo-build-lock" "$TARGET_DIR/release/.cargo-lock" 2>/dev/null || true
+  echo "[install] 构建缓存: $TARGET_DIR（升级将增量编译）"
   CARGO_TARGET_DIR="$TARGET_DIR" cargo install --path "$SRC" --root "$PREFIX" \
     --locked --features "$GANYU_FEATURES"
   chmod +x "$BIN"

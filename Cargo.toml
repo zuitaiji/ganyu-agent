@@ -62,5 +62,13 @@ sandbox = ["dep:landlock"]
 # 便捷组合：生产加固全开（不含 sandbox——Landlock 仅 Linux；跨平台隔离由 C3/C4 文件沙箱兜底）。
 hardened = ["network", "crypto", "secret", "shell"]
 
+# 构建缓存优化（方案 B2：小体积）。thin LTO + 适度 codegen 聚合 + strip + abort。
+# panic=abort 安全（源码无 catch_unwind）；如需 unwind 可移除该行。
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true
+panic = "abort"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "sync"] }
