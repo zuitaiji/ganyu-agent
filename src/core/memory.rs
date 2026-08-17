@@ -455,9 +455,14 @@ mod tests {
         let _ = std::fs::remove_file(".ganyu_test_concurrent.json");
     }
 
+    /// 加密测试共享 GANYU_MEM_KEY（进程全局 env），必须串行防竞态。
+    #[cfg(feature = "crypto")]
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[cfg(feature = "crypto")]
     #[tokio::test]
     async fn encrypted_roundtrip() {
+        let _g = ENV_LOCK.lock().unwrap();
         // H1：设置密钥后落盘应为密文，且可正确还原。
         std::env::set_var("GANYU_MEM_KEY", "test-passphrase-123");
         let path = ".ganyu_test_enc.json";
@@ -483,6 +488,7 @@ mod tests {
     #[cfg(feature = "crypto")]
     #[tokio::test]
     async fn wrong_key_never_overwrites_encrypted_file() {
+        let _g = ENV_LOCK.lock().unwrap();
         // P2：密钥错误时 put 不得把加密记忆库静默覆盖为空库（防永久丢失）。
         let path = ".ganyu_test_wrongkey.json";
         let _ = std::fs::remove_file(path);
