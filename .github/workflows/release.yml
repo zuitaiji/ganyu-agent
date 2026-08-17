@@ -39,6 +39,11 @@ jobs:
       - name: Test
         run: cargo test --features hardened
 
+      - name: Security audit (supply chain)
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+
       - name: Smoke test
         run: |
           target/release/ganyu-agent tools
