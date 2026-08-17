@@ -70,6 +70,18 @@ fn sha256_of_file(path: &Path) -> GanyuResult<String> {
     }
 }
 
+/// 校验自更新资产的 ed25519 签名（R-1 供应链强校验）。
+///
+/// `pubkey` 为 32 字节 ed25519 原始公钥（来自 `GANYU_UPDATE_PUBKEY`）；
+/// `msg` 为下载的更新资产字节；`sig` 为 64 字节签名（来自 `<url>.sig`）。
+/// 复用已挂在 `network` 特性下的 `ring` 0.17，避免新增依赖。
+#[cfg(feature = "network")]
+fn verify_update_signature(pubkey: &[u8], msg: &[u8], sig: &[u8]) -> bool {
+    use ring::signature::UnparsedPublicKey;
+    let peer = UnparsedPublicKey::new(&ring::signature::ED25519, pubkey);
+    peer.verify(msg, sig).is_ok()
+}
+
 fn default_memory_path() -> std::path::PathBuf {
     let base = std::env::var("GANYU_HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -167,7 +179,7 @@ async fn main() -> GanyuResult<()> {
     }
     gateway.set_audit(audit.clone());
 
-    // F-10：凭据优先取环境变量，回退到配置文件（read_model_config），不再依赖 load_model_config 写入全局环境。
+    // F-10：凭据优先取环境变量，回退到配置文件（read_model_config）显式取用，密钥仅在内存传递，不注入全局环境。
     let mcfg = ganyu_agent::config::read_model_config();
     let base = std::env::var("OPENAI_API_BASE").ok().or(mcfg.0);
     let key = std::env::var("OPENAI_API_KEY").ok().or(mcfg.1);
@@ -580,7 +592,38 @@ async fn main() -> GanyuResult<()> {
                 std::fs::write(&tmp, &bytes)?;
                 println!("[update] 下载完成（{} bytes），校验 sha256…", bytes.len());
 
-                // 供应链校验：下载配套 .sha256 并对比（release 资产由 CI 生成）
+                // 供应链强校验（可选，R-1）：若设置了 GANYU_UPDATE_PUBKEY（ed25519 原始公钥，32 字节 hex），
+                // 下载 <url>.sig 并用固定公钥对下载的 tar 字节验签。缺失/不符则失败闭环拒绝。
+                // 否则仅做同源 sha256（无法防恶意发布服务器），并明确告警，提示配置签名校验。
+                if let Ok(pubkey_hex) = std::env::var("GANYU_UPDATE_PUBKEY") {
+                    match ganyu_agent::security::decode_hex(&pubkey_hex) {
+                        Some(pubkey) if pubkey.len() == 32 => {
+                            let sig_url = format!("{url}.sig");
+                            let sig_bytes = client.get(&sig_url).send().await
+                                .map_err(|e| GanyuError::Http(e.to_string()))?
+                                .error_for_status()
+                                .map_err(|e| GanyuError::Http(e.to_string()))?
+                                .bytes().await
+                                .map_err(|e| GanyuError::Http(e.to_string()))?;
+                            if sig_bytes.len() != 64 || !verify_update_signature(&pubkey, &bytes, &sig_bytes) {
+                                eprintln!("[fatal] ed25519 签名校验失败（缺 .sig 或签名不符），拒绝应用更新。");
+                                eprintln!("        请确认发布方公钥已正确写入 GANYU_UPDATE_PUBKEY，或改用 GANYU_UPDATE_ALLOW_NOCHECK=1 强制（不推荐）。");
+                                let _ = std::fs::remove_file(&tmp);
+                                std::process::exit(1);
+                            }
+                            println!("[update] ed25519 签名校验通过 ✅");
+                        }
+                        _ => {
+                            eprintln!("[fatal] GANYU_UPDATE_PUBKEY 无效（需 32 字节 hex 公钥），拒绝更新以免误用未签名构建。");
+                            let _ = std::fs::remove_file(&tmp);
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    eprintln!("[warn] 未设置 GANYU_UPDATE_PUBKEY：更新仅做同源 sha256 校验，无法抵御发布服务器/账号被接管。建议配置固定公钥启用签名校验。");
+                }
+
+                // 同源 sha256 比对（防御纵深，始终执行）
                 let sha_url = format!("{url}.sha256");
                 let sha_bytes = client.get(&sha_url).send().await
                     .map_err(|e| GanyuError::Http(e.to_string()))?
@@ -621,7 +664,7 @@ async fn main() -> GanyuResult<()> {
                     if let Ok(o) = list_out {
                         let entries = String::from_utf8_lossy(&o.stdout);
                         for e in entries.lines() {
-                            if e.starts_with('/') || e.starts_with('\\') || e.contains("..") {
+                            if !ganyu_agent::security::is_safe_archive_entry(e) {
                                 eprintln!("[fatal] 更新包含非法路径（{e}），疑似路径穿越，已拒绝。");
                                 let _ = std::fs::remove_file(&tmp);
                                 std::process::exit(1);

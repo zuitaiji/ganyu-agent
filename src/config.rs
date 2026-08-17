@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use crate::GanyuError;
 
-/// 配置文件路径（与 `load_model_config` 同优先级：`$GANYU_CONFIG` > `~/.ganyu/config.toml` > `./ganyu.toml`）。
+/// 配置文件路径（优先级：`$GANYU_CONFIG` > `~/.ganyu/config.toml` > `./ganyu.toml`）。
 pub fn config_path() -> Option<String> {
     std::env::var("GANYU_CONFIG").ok().or_else(|| {
         std::env::var("USERPROFILE")
@@ -166,58 +166,6 @@ pub fn ensure_config_template() -> Option<String> {
     } else {
         None
     }
-}
-
-/// 从配置文件加载模型配置（对标 OpenClaw `config.yaml` / Hermes 配置文件），
-/// 实现「一站式」：写一次 `~/.ganyu/config.toml`，之后直接 `ganyu-agent chat` 即可对话。
-///
-/// 规则：
-/// - 路径优先级：`$GANYU_CONFIG` > `~/.ganyu/config.toml` > `./ganyu.toml`；
-/// - **已设置的环境变量优先于文件**（env 覆盖文件，便于 CI/容器注入）；
-/// - 文件格式（toml）：
-///   ```toml
-///   [model]
-///   base_url = "https://apihub.agnes-ai.com/v1"
-///   api_key = "sk-..."
-///   model = "agnes-2.5-flash"
-///   ```
-pub fn load_model_config() {
-    let path = std::env::var("GANYU_CONFIG").ok().or_else(|| {
-        std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .ok()
-            .map(|h| format!("{h}/.ganyu/config.toml"))
-            .or_else(|| Some("ganyu.toml".to_string()))
-    });
-    let Some(path) = path else { return };
-    let Ok(text) = std::fs::read_to_string(&path) else { return };
-
-    #[derive(serde::Deserialize, Default)]
-    struct FileCfg {
-        #[serde(default)]
-        model: Option<ModelCfg>,
-    }
-    #[derive(serde::Deserialize)]
-    struct ModelCfg {
-        base_url: Option<String>,
-        api_key: Option<String>,
-        model: Option<String>,
-    }
-    let Ok(parsed) = toml::from_str::<FileCfg>(&text) else { return };
-    let Some(m) = parsed.model else { return };
-
-    if std::env::var("OPENAI_API_BASE").is_err() {
-        if let Some(b) = m.base_url {
-            std::env::set_var("OPENAI_API_BASE", b);
-        }
-    }
-    if std::env::var("OPENAI_MODEL").is_err() {
-        if let Some(md) = m.model {
-            std::env::set_var("OPENAI_MODEL", md);
-        }
-    }
-    // F-10：API Key 不再注入进程全局环境变量（避免泄漏到子进程 / 插件环境）。
-    // 调用方应改用 `read_model_config()` 显式取用密钥。
 }
 
 /// 配置快照（启动时读取一次）。

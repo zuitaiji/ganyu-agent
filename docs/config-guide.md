@@ -58,7 +58,8 @@ telegram_token = "123456:ABC..."
 ```
 
 规则：路径优先级 `$GANYU_CONFIG` > `~/.ganyu/config.toml` > `./ganyu.toml`；
-**已设置的环境变量优先于文件**（CI/容器友好）。实现：`config::load_model_config()`；
+**已设置的环境变量优先于文件**（CI/容器友好）。读取实现：`config::read_model_config()`
+（`main.rs` 启动时合并 env 与文件，密钥仅在内存传递，不写全局环境）；
 写入实现：`config::write_model_config()` / `write_gateway_token()`（保留文件中其他段）。
 
 ## 3. 场景配置模板

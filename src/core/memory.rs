@@ -57,7 +57,7 @@ impl LocalMemory {
         let raw = std::fs::read_to_string(&path).ok();
         let mut load_failed = false;
         let store = match raw {
-            Some(s) if s.starts_with("ENC1:") => {
+            Some(s) if s.starts_with("ENC1:") || s.starts_with("ENC2:") => {
                 // 密文：仅在 crypto 特性下尝试解密；否则视作不可读，从空库起步。
                 #[cfg(feature = "crypto")]
                 {
@@ -184,12 +184,43 @@ impl Memory for LocalMemory {
 
 /// H1：AES-256-GCM 机密封装（仅 crypto 特性编译）。
 ///
-/// 设计取舍：密钥由 `GANYU_MEM_KEY` 经 SHA-256 派生，避免引入额外 KDF 依赖；
-/// 这是"够用"的离线默认。生产环境应改从 OS 密钥环 / KMS 注入原始 32 字节密钥
-/// （替换 `from_env` 即可），本结构不绑定具体密钥来源。
+/// 密钥派生（R-2 加固）：
+/// - 口令 `GANYU_MEM_KEY` 先经 `stretch()` 迭代 SHA-256 拉伸（100k 轮）得到**主密钥**，
+///   显著抬高"记忆文件被盗 + 弱口令"下的离线暴破成本；
+/// - 每个记忆文件再用**随机盐**派生独立文件密钥 `SHA-256(master || salt)`，
+///   杜绝"同口令 → 同密钥"；
+/// - 落盘格式 `ENC2:<hex>`，hex = 盐(16) ‖ nonce(12) ‖ 密文；
+/// - 仍兼容旧格式 `ENC1:`（无盐、单次 SHA-256 派生），旧记忆文件可正常解密。
+///
+/// 生产环境应改从 OS 密钥环 / KMS 注入原始 32 字节密钥（替换 `from_env` 即可），
+/// 本结构不绑定具体密钥来源。
 #[cfg(feature = "crypto")]
 struct Cipher {
-    key: [u8; 32],
+    /// 原始口令（仅进程内存使用）。
+    pass: String,
+    /// 口令经拉伸后的主密钥（无盐，一次性成本）；每文件再加随机盐派生文件密钥。
+    master: [u8; 32],
+}
+
+/// KDF 迭代轮数：把 SHA-256 口令拉伸 100_000 轮，显著抬高离线暴破成本（R-2）。
+const KDF_ROUNDS: u32 = 100_000;
+
+#[cfg(feature = "crypto")]
+fn sha256_sum(b: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b);
+    h.finalize().into()
+}
+
+/// 口令拉伸（无盐，一次性）：迭代 SHA-256。盐在每文件级别引入（见 `file_key`）。
+#[cfg(feature = "crypto")]
+fn stretch(pass: &str) -> [u8; 32] {
+    let mut key = sha256_sum(pass.as_bytes());
+    for _ in 0..KDF_ROUNDS {
+        key = sha256_sum(&key);
+    }
+    key
 }
 
 #[cfg(feature = "crypto")]
@@ -199,11 +230,22 @@ impl Cipher {
         if pass.is_empty() {
             return None;
         }
+        let master = stretch(&pass);
+        Some(Cipher { pass, master })
+    }
+
+    /// 每文件密钥 = SHA-256(master ‖ salt)，使每个记忆文件使用独立密钥（R-2）。
+    fn file_key(&self, salt: &[u8]) -> [u8; 32] {
         use sha2::{Digest, Sha256};
         let mut h = Sha256::new();
-        h.update(pass.as_bytes());
-        let key: [u8; 32] = h.finalize().into();
-        Some(Cipher { key })
+        h.update(self.master);
+        h.update(salt);
+        h.finalize().into()
+    }
+
+    /// 旧格式（ENC1）兼容：原密钥 = 单次 SHA-256(passphrase)。
+    fn legacy_key(&self) -> [u8; 32] {
+        sha256_sum(self.pass.as_bytes())
     }
 
     fn encrypt(&self, plaintext: &str) -> String {
@@ -211,33 +253,53 @@ impl Cipher {
         use aes_gcm::Aes256Gcm;
         use rand::RngCore;
 
-        let cipher = Aes256Gcm::new(GenericArray::from_slice(&self.key));
+        // 每文件随机盐，杜绝"同口令 → 同密钥"。
+        let mut salt = [0u8; 16];
+        rand::thread_rng().fill_bytes(&mut salt);
+        let fk = self.file_key(&salt);
+
+        let cipher = Aes256Gcm::new(GenericArray::from_slice(&fk));
         let mut nonce = [0u8; 12];
         rand::thread_rng().fill_bytes(&mut nonce);
         let ct = cipher
             .encrypt(GenericArray::from_slice(&nonce), plaintext.as_bytes())
             .unwrap_or_default();
-        let mut blob = nonce.to_vec();
+        let mut blob = salt.to_vec();
+        blob.extend_from_slice(&nonce);
         blob.extend_from_slice(&ct);
-        format!("ENC1:{}", hex_encode(&blob))
+        format!("ENC2:{}", hex_encode(&blob))
     }
 
     fn decrypt(&self, blob: &str) -> Option<String> {
-        use aes_gcm::aead::{Aead, KeyInit, generic_array::GenericArray};
-        use aes_gcm::Aes256Gcm;
-
-        let b64 = blob.strip_prefix("ENC1:")?;
-        let raw = hex_decode(b64)?;
-        if raw.len() < 12 {
-            return None;
+        if let Some(b64) = blob.strip_prefix("ENC2:") {
+            let raw = hex_decode(b64)?;
+            if raw.len() < 28 {
+                return None;
+            } // 16 盐 + 12 nonce
+            let (salt, rest) = raw.split_at(16);
+            let (nonce, ct) = rest.split_at(12);
+            return aes_gcm_decrypt(&self.file_key(salt), nonce, ct);
         }
-        let (nonce, ct) = raw.split_at(12);
-        let cipher = Aes256Gcm::new(GenericArray::from_slice(&self.key));
-        let pt = cipher
-            .decrypt(GenericArray::from_slice(nonce), ct)
-            .ok()?;
-        String::from_utf8(pt).ok()
+        if let Some(b64) = blob.strip_prefix("ENC1:") {
+            // 向后兼容旧格式（无盐，单次 SHA-256 派生密钥）。
+            let raw = hex_decode(b64)?;
+            if raw.len() < 12 {
+                return None;
+            }
+            let (nonce, ct) = raw.split_at(12);
+            return aes_gcm_decrypt(&self.legacy_key(), nonce, ct);
+        }
+        None
     }
+}
+
+#[cfg(feature = "crypto")]
+fn aes_gcm_decrypt(key: &[u8; 32], nonce: &[u8], ct: &[u8]) -> Option<String> {
+    use aes_gcm::aead::{Aead, KeyInit, generic_array::GenericArray};
+    use aes_gcm::Aes256Gcm;
+    let cipher = Aes256Gcm::new(GenericArray::from_slice(key));
+    let pt = cipher.decrypt(GenericArray::from_slice(nonce), ct).ok()?;
+    String::from_utf8(pt).ok()
 }
 
 #[cfg(feature = "crypto")]
@@ -475,7 +537,7 @@ mod tests {
         }
         // 直接读盘，确认是密文（含 ENC1: 前缀），明文不应泄露。
         let raw = std::fs::read_to_string(path).unwrap();
-        assert!(raw.starts_with("ENC1:"), "expected ciphertext on disk");
+        assert!(raw.starts_with("ENC2:"), "expected ciphertext (ENC2) on disk");
         assert!(!raw.contains("topsecret"), "plaintext must not leak to disk");
         // 重新打开（同密钥）能还原。
         let m2 = LocalMemory::new(path);
@@ -500,7 +562,7 @@ mod tests {
                 .unwrap();
         }
         let encrypted = std::fs::read_to_string(path).unwrap();
-        assert!(encrypted.starts_with("ENC1:"));
+        assert!(encrypted.starts_with("ENC2:"));
         // 换错误密钥：读取失败 → load_failed → put 不落盘
         std::env::set_var("GANYU_MEM_KEY", "key-b");
         {
@@ -516,6 +578,44 @@ mod tests {
         let m3 = LocalMemory::new(path);
         let got = m3.get("viking://user/memory/x").await.unwrap();
         assert_eq!(got, Some(Value("secret".into())));
+        let _ = std::fs::remove_file(path);
+        std::env::remove_var("GANYU_MEM_KEY");
+    }
+
+    #[cfg(feature = "crypto")]
+    #[tokio::test]
+    async fn enc1_backward_compat_readable() {
+        let _g = ENV_LOCK.lock().unwrap();
+        // R-2 回归：旧格式 ENC1（无盐、单次 SHA-256 派生密钥）必须仍可被解密，
+        // 否则旧记忆文件在升级后会变成"密钥正确也读不出"。
+        std::env::set_var("GANYU_MEM_KEY", "key-a");
+        let path = ".ganyu_test_enc1compat.json";
+        let _ = std::fs::remove_file(path);
+
+        // 用旧方案手动构造一条 ENC1 密文。
+        use aes_gcm::aead::{Aead, KeyInit, generic_array::GenericArray};
+        use aes_gcm::Aes256Gcm;
+        use rand::RngCore;
+        use sha2::{Digest, Sha256};
+        let key: [u8; 32] = Sha256::new().chain_update(b"key-a").finalize().into();
+        let mut nonce = [0u8; 12];
+        rand::thread_rng().fill_bytes(&mut nonce);
+        let ct = Aes256Gcm::new(GenericArray::from_slice(&key))
+            .encrypt(GenericArray::from_slice(&nonce), &b"legacy-topsecret"[..])
+            .unwrap();
+        let mut blob = nonce.to_vec();
+        blob.extend_from_slice(&ct);
+        let enc1 = format!("ENC1:{}", hex_encode(&blob));
+        std::fs::write(path, &enc1).unwrap();
+
+        // 明文不得落盘泄露。
+        let raw = std::fs::read_to_string(path).unwrap();
+        assert!(!raw.contains("legacy-topsecret"));
+        // 同口令下 Cipher 能正确解码旧格式。
+        let cipher = Cipher::from_env().expect("Cipher 应可用");
+        let pt = cipher.decrypt(&enc1).expect("ENC1 必须可解密");
+        assert_eq!(pt, "legacy-topsecret");
+
         let _ = std::fs::remove_file(path);
         std::env::remove_var("GANYU_MEM_KEY");
     }

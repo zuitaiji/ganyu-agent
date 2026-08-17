@@ -80,3 +80,40 @@
 - `cargo test --release`：36 单元（含 `catalog_has_no_duplicate_names`/`all_caps_registered_as_skills`/`every_cap_routes_by_keyword`/`synced_skill_files_present`）+ 5 集成 + 8 工作流，全部通过（RC=0）。
 - 端到端：`ganyu tools` 列出 33 个 `skill:<name>`；`ganyu skill clean-code` 返回真实 `SKILL.md` 正文。
 - 本次审查为**静态源码审查**，未改动代码；如需我直接落地 P0/P1 修复，请确认。
+
+---
+
+## 5. 第二阶段：STRIDE 模型与残余风险登记（R-1 ~ R-9）
+
+> 在 F-01~F-14 全部闭环后，针对新增/残余风险做 STRIDE 建模与第二阶段加固。
+> 详细报告见 `docs/SECURITY-REPORT.md`；加固实现见 `docs/security_fixes.md`「第二阶段加固」。
+
+### 5.1 STRIDE 结论
+
+| STRIDE | 现有控制 | 残余风险 | 评级 |
+|--------|----------|----------|------|
+| Spoofing | API Key / Telegram token 认证；本地单用户无远程身份面 | 无跨用户身份冒用 | 低 |
+| Tampering | 记忆 AES-256-GCM（R-2）；config 0600(unix)；更新 sha256 **+ ed25519 签名**（R-1）；FS 沙箱 | Windows config 权限依赖 ACL（R-8/R-9）；OV 明文传输（R-3） | 低 |
+| Repudiation | `observe::AuditLog`（无密钥回显） | 审计日志未防篡改存储 | 低 |
+| Info Disclosure | 记忆加密（R-2）；`Zeroizing` 擦除；F-10 移除全局 env；masked 显示；SSRF；模型输出净化 | `GANYU_MEM_KEY` 仍存进程 env（R-4）；OV 明文（R-3） | 低 |
+| DoS | 计划步数上限 20；`max_rounds`；模型输出 1M 截断；限速 | 黑板快照无硬上限（R-6） | 低 |
+| EoP | Landlock（Linux）；shell 双层关；插件 allowlist；`cap=` 首行；SSRF；FS 沙箱 | tar 穿越已补（R-5） | 低 |
+
+### 5.2 R-1 ~ R-9 处置
+
+| ID | 风险 | 严重度 | 处置 |
+|----|------|--------|------|
+| R-1 | 自更新仅同源 sha256，发布方被接管无法鉴别 | Medium | **已加固**（ed25519 签名，`main.rs`，ring 0.17） |
+| R-2 | 记忆密钥无盐/单次哈希，弱口令易暴破 | Medium | **已加固**（每文件盐 + 100k 轮 KDF，`ENC2:`，兼容 `ENC1:`） |
+| R-3 | OpenViking `OV_BASE` 可能 http 明文外发 | Low | 接受（默认本地 `:1933`；建议 TLS/内网隔离） |
+| R-4 | `GANYU_MEM_KEY` 存进程 env，崩溃/子进程可泄漏 | Low | 接受（已由 F-10 收敛；建议 OS 密钥环/KMS） |
+| R-5 | tar 解包漏 Windows 盘符绝对路径 | Medium | **已加固**（`is_safe_archive_entry` 拒绝盘符绝对路径） |
+| R-6 | 黑板快照无硬上限 | Low | 接受（`max_rounds` 间接有界；建议加字节上限） |
+| R-7 | 死代码 `load_model_config` 含全局 `set_var` | Low | **已清理**（删除函数） |
+| R-8 | `write_model_config` 仅 unix 0600，Windows 未收紧 | Info | 接受（建议 `icacls` 限属主） |
+| R-9 | Windows 记忆/配置目录未做等价权限隔离 | Info | 接受（平台权限模型差异） |
+
+### 5.3 第二阶段结论
+
+F-01~F-14 全部闭环；本阶段按范围 **B（A + R-1）** 完成 HARD-1（记忆加密强化）、HARD-2（tar 盘符穿越）、HARD-3（死代码清理）、R-1（ed25519 签名）。R-1 把供应链完整性从"传输层"提升到"发布方身份层"，是本期最关键增益。R-3/R-4/R-6/R-8/R-9 均为 Low/Info，已记录并接受，按路线图后续消除。**生产部署仍强制 `--features hardened`（Linux 加 `sandbox`），并配置 `GANYU_MEM_KEY` 与 `GANYU_UPDATE_PUBKEY`。**
+

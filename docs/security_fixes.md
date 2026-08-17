@@ -219,3 +219,78 @@ AI 会去网上抓内容、读文件，这些“外面来的信息”里可能�
 1. 生产部署务必 `--features hardened`（Linux 再加 `sandbox`），并设 `GANYU_MEM_KEY` 强制记忆加密。
 2. 把 `docs/security_audit.md`、`docs/security_fixes.md` 一并纳入评审与变更记录。
 3. F-06 是 agent 类系统的持续性难题，后续可在“指令 vs 数据”边界上做模型侧隔离（如只读 observer 模式），本次先做显式围栏降级风险。
+
+---
+
+## 第二阶段加固（HARD-1~3 / R-1）
+
+> 在 F-01~F-14 已闭环的基础上，按评审确认的范围 **B（A + R-1）** 落地：
+> A = 三处低风险代码加固（HARD-1 记忆加密加盐拉伸 / HARD-2 tar 盘符穿越补强 / HARD-3 清理死代码 `load_model_config`）；
+> R-1 = 自更新 ed25519 签名校验。
+> 对应报告：`docs/SECURITY-REPORT.md`（STRIDE 模型 + R-1~R-9 登记 + 残余风险接受）。
+
+| ID | 严重度 | 文件 | 一句话 |
+|----|--------|------|--------|
+| HARD-1 / R-2 | Medium | `src/core/memory.rs` | 记忆密钥单次 SHA-256 无盐 → 每文件随机盐 + 100k 轮 KDF 拉伸 + `SHA-256(master‖salt)` 文件密钥（`ENC2:`），兼容旧 `ENC1:` |
+| HARD-2 / R-5 | Medium | `src/security.rs` / `src/main.rs` | tar 解包穿越检查未覆盖 Windows 盘符绝对路径 → `is_safe_archive_entry` 拒绝 `C:\`/`D:/` 等盘符绝对路径 |
+| HARD-3 / R-7 | Low | `src/config.rs` | 死代码 `load_model_config()` 仍含全局 `set_var` → 删除函数，消除潜在全局 env 泄漏面 |
+| R-1 | Medium | `src/main.rs` / `Cargo.toml` | 自更新仅同源 sha256（发布方被接管无防） → 新增 `GANYU_UPDATE_PUBKEY`(ed25519 32B) + `<url>.sig` 验签，失败闭环（ring 0.17，挂 `network`） |
+
+### HARD-1 / R-2　记忆加密强化（ENC2）
+
+**① 深度根因**
+旧 `Cipher` 用 `key = SHA-256(passphrase)` 直接派生，**无盐**且**单次哈希**：①同口令 → 同密钥，泄露一个记忆文件即可反推其它同口令文件；②弱口令下离线暴破成本极低（一次 SHA-256）。记忆文件含敏感对话/凭据，落盘风险高于 F-02 明文。
+
+**② 改了什么**
+- `stretch(pass)`：迭代 `SHA-256` 共 `KDF_ROUNDS=100_000` 轮 → 主密钥 `master`（一次性成本，抬高离线暴破）；
+- `encrypt` 每文件生成随机 `salt[16]`，文件密钥 `file_key = SHA-256(master ‖ salt)`（每文件独立密钥）；
+- 落盘 `ENC2:<hex( salt(16) ‖ nonce(12) ‖ ct )>`，AES-256-GCM；
+- `decrypt` 按前缀分支：`ENC2` 用 `file_key`、`ENC1` 用 `legacy_key`（单次 SHA-256），**旧记忆文件仍可解密**（升级不丢数据）；
+- 密钥错误 → `load_failed=true` → `save()` 跳过，原密文不被空库覆盖（延续 F 阶段 P2 防护）。
+
+**③ 大白话**
+记忆加密原来"一把钥匙开所有锁"还很容易被猜。现在：每个记忆文件用一把**随机生成的独立钥匙**，而随机钥匙又由你的口令"反复 hashing 十万次"炼出来的主钥匙再混合生成。这样既防"同口令共密钥"，又把弱口令的暴破成本抬了十万倍。
+
+### HARD-2 / R-5　tar 解包盘符穿越补强
+
+**① 深度根因**
+原 `update` 的 tar 条目检查只拒绝 `/`、`\` 开头与 `..`，漏掉了 **Windows 盘符绝对路径**（`C:\windows\...`、`D:/tmp/x`）。恶意 Release 在压缩包里放盘符绝对路径，在 Windows 上解压时即可写出 `bin_dir` 之外，覆盖系统文件。
+
+**② 改了什么**
+`is_safe_archive_entry` 增加：第 2 字符为 `:` 且第 1 字符是字母（盘符绝对路径）即拒绝；`main.rs::update` 解包前 `tar -tzf` 列出条目逐条校验，任一不安全整体中止。新增单测覆盖 `C:\`、`D:/`、`\windows\...`。
+
+**③ 大白话**
+解压更新包时，除了拦"../"和"/开头"，现在把 Windows 特有的"C盘绝对路径"也拦了，防止恶意包在 Windows 上把文件写到系统目录去。
+
+### HARD-3 / R-7　清理死代码 `load_model_config`
+
+**① 深度根因**
+`config::load_model_config()` 在 F-10 修复后已无调用方，但函数体仍保留 `std::env::set_var("OPENAI_API_BASE"/"OPENAI_MODEL")`——一处"已知不安全模式的活样板"，且会误导后续维护者复用全局 env。
+
+**② 改了什么**
+直接删除 `load_model_config()` 整个函数（含 doc 注释）。`main.rs` 早已改用 `read_model_config()` 内存取用，`config.rs`/`main.rs` 中指向它的注释同步更正。`docs/config-guide.md` 中"实现：`config::load_model_config()`"改为 `read_model_config()`。
+
+**③ 大白话**
+清理了一段"虽然没人调用、但写法不安全"的老代码，避免后来人照抄把密钥写进全局环境。
+
+### R-1　自更新 ed25519 签名校验
+
+**① 深度根因**
+`update` 流程的完整性校验只有**同源 sha256**：只要下载内容与 Release 上的 `.sha256` 一致就安装。但 `.sha256` 本身由发布服务器提供——**若发布方账号/服务器被接管，攻击者能同时替换二进制与校验值**，用户仍会装上被篡改的版本。这是"信任发布服务器"而非"信任发布方身份"。
+
+**② 改了什么**
+- `Cargo.toml` 挂可选 `ring 0.17` 到 `network` 特性（复用 rustls 已拉入的 ring，零新增下载）；
+- `main.rs::verify_update_signature(pubkey, msg, sig)` 基于 `ring::signature::UnparsedPublicKey::verify`（ED25519）；
+- 更新流程（在 sha256 比对前）：若设置 `GANYU_UPDATE_PUBKEY`（32B hex 公钥）→ 下载 `<url>.sig`（64B 签名）→ 对下载资产字节验签；缺 `.sig`/不符 → 失败闭环 `exit(1)`；未设置 → 仅同源 sha256 并明确告警。
+- 与既有 sha256 形成**防御纵深**：签名证明"来自正确的发布方"，sha256 证明"传输没被改"。
+
+**③ 大白话**
+自动更新原来只核对"下载的东西和官网说的一样不一样"，但官网自己要是被黑了这层就没用了。现在多加一把锁：用发布方的**数字签名**验证"这确实是官方出的、没被换成别人的"。前提是发布流水线（CI）用私钥给每个版本签名、并把公钥公示给用户配置到 `GANYU_UPDATE_PUBKEY`（见 `SECURITY-REPORT.md` 第 6 节）。
+
+### 验证（第二阶段）
+
+- `cargo check --features hardened`：通过（crypto/network/secret/shell 全特性）。
+- `cargo check --tests --features hardened`：通过（RC=0，含全部 `#[cfg(test)]` 代码与新增/修改回归用例）。
+- 修正点：移除 `memory.rs::decrypt` 未使用的 `aes_gcm` 导入；修复 `enc1_backward_compat_readable` 测试 `b"legacy-topsecret"` 数组需转切片（`&[..]`）的编译错误。
+- 注：本工作区 `Cargo.lock` 受写入限制，且沙箱拦截测试二进制执行，故本地未跑出运行时计数；以上为全量编译验证。在可写环境执行 `cargo test --features hardened` 即可获得完整通过计数。
+

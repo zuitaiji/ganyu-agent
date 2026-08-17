@@ -42,6 +42,12 @@ optional = true
 version = "0.10"
 optional = true
 
+# ed25519 签名校验（自更新供应链强校验，R-1）：复用 reqwest/rustls 已拉入的 ring。
+# 仅在 network 特性下启用（自更新需联网）。
+[dependencies.ring]
+version = "0.17"
+optional = true
+
 # 进程级 FS 沙箱：Landlock 仅 Linux 内核可用，故作为「目标特定」可选依赖——
 # 仅在 Linux 构建时才拉取，避免在非 Linux（如 Windows/macOS）破坏编译。
 [target.'cfg(target_os = "linux")'.dependencies.landlock]
@@ -52,7 +58,7 @@ optional = true
 # 默认开启 crypto/secret：密钥零化（secret）与记忆加密（crypto）默认可用，
 # 避免“忘了 --features hardened 就裸奔”（F-09）。network/shell/sandbox 仍按需显式开启。
 default = ["crypto", "secret"]
-network = ["dep:reqwest"]
+network = ["dep:reqwest", "dep:ring"]
 crypto = ["dep:aes-gcm", "dep:rand", "dep:sha2"]
 secret = ["dep:zeroize"]
 # exec / shell 工具默认关闭（C1 失败闭环）；显式开启才编译进二进制。

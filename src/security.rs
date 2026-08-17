@@ -376,6 +376,46 @@ pub fn fence_untrusted(label: &str, content: &str) -> String {
     )
 }
 
+/// 把十六进制字符串解码为字节（用于 ed25519 公钥/签名的解析，R-1）。
+/// 长度非偶数或含非 hex 字符返回 `None`。
+pub fn decode_hex(s: &str) -> Option<Vec<u8>> {
+    let s = s.trim();
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
+        .collect::<Result<Vec<u8>, _>>()
+        .ok()
+}
+
+/// 归档条目路径安全检查（自更新用，R-5 补强）：拒绝
+/// - 空路径 / 含 NUL；
+/// - 以 `/` 或 `\` 开头的绝对路径；
+/// - 含 `..` 路径穿越；
+/// - Windows 盘符绝对路径（`C:\…` / `C:/…`，`[A-Za-z]:` 开头）。
+///
+/// 仅允许相对、无穿越的条目（如 `ganyu-agent` 或 `bin/ganyu-agent`），
+/// 配合 `tar -xzf … -C <bin_dir>` 即可杜绝"压缩包内恶意路径写出沙箱目录外"。
+pub fn is_safe_archive_entry(entry: &str) -> bool {
+    let t = entry.trim();
+    if t.is_empty() || t.contains('\0') {
+        return false;
+    }
+    if t.starts_with('/') || t.starts_with('\\') {
+        return false;
+    }
+    if t.contains("..") {
+        return false;
+    }
+    // Windows 盘符绝对路径：第 2 字符为 `:` 且第 1 字符是字母。
+    if t.len() >= 2 && t.as_bytes()[1] == b':' && t.as_bytes()[0].is_ascii_alphabetic() {
+        return false;
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,5 +463,25 @@ mod tests {
         assert!(ips.contains(&"1.1.1.1".parse().unwrap()));
         // 内网一律不返回
         assert!(ssrf_guard_resolve("http://[::ffff:192.168.1.1]/").is_err());
+    }
+
+    #[test]
+    fn archive_entry_rejects_traversal_and_abs() {
+        // R-5：tar 条目安全检查——相对无穿越放行，绝对/穿越/盘符拒绝。
+        assert!(is_safe_archive_entry("ganyu-agent"));
+        assert!(is_safe_archive_entry("bin/ganyu-agent"));
+        assert!(!is_safe_archive_entry("../etc/passwd"));
+        assert!(!is_safe_archive_entry("/etc/passwd"));
+        assert!(!is_safe_archive_entry("\\windows\\system32\\x"));
+        assert!(!is_safe_archive_entry("C:\\windows\\system32\\x"));
+        assert!(!is_safe_archive_entry("D:/tmp/x"));
+        assert!(!is_safe_archive_entry(""));
+    }
+
+    #[test]
+    fn decode_hex_roundtrip() {
+        assert_eq!(decode_hex("deadBEEF").unwrap(), vec![0xde, 0xad, 0xbe, 0xef]);
+        assert!(decode_hex("xyz").is_none());
+        assert!(decode_hex("abc").is_none()); // 奇数长度
     }
 }
