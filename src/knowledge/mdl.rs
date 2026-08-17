@@ -52,6 +52,28 @@ impl Mdl {
         Ok(Mdl { models })
     }
 
+    /// 内置默认 MDL（编译期打包 `examples/sample_mdl.json`）——任意工作目录可用，
+    /// 解决 SAG 依赖 cwd 相对路径而报 NotFound 的问题。
+    pub fn load_default() -> GanyuResult<Self> {
+        let s = include_str!("../../examples/sample_mdl.json");
+        let doc: MdlDoc = serde_json::from_str(s)?;
+        let models = doc.models.into_iter().map(|m| (m.name.clone(), m)).collect();
+        Ok(Mdl { models })
+    }
+
+    /// 加载 MDL，三级回退：`GANYU_MDL` 显式路径 → 仓库 `examples/sample_mdl.json` → 内置默认。
+    pub fn load_any() -> GanyuResult<Self> {
+        if let Ok(p) = std::env::var("GANYU_MDL") {
+            if let Ok(m) = Self::load(&p) {
+                return Ok(m);
+            }
+        }
+        if let Ok(m) = Self::load("examples/sample_mdl.json") {
+            return Ok(m);
+        }
+        Self::load_default()
+    }
+
     pub fn tables(&self) -> Vec<&str> {
         self.models.keys().map(|s| s.as_str()).collect()
     }

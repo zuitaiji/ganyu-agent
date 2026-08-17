@@ -277,7 +277,7 @@ async fn main() -> GanyuResult<()> {
                 .first()
                 .cloned()
                 .unwrap_or_else(|| "上月华东区利润最高的三个产品".to_string());
-            let mdl = Mdl::load("examples/sample_mdl.json")?;
+            let mdl = Mdl::load_any()?;
             let pipeline = SagPipeline {
                 mdl: Arc::new(mdl),
                 gateway: agent.gateway.clone(),
@@ -1050,7 +1050,7 @@ async fn selftest() {
     gw.register(Arc::new(LocalBackend) as DynBackend);
     let skills = Arc::new(SkillBook::new(memory.clone()));
     register_core_skills(&skills);
-    if let Ok(mdl) = Mdl::load("examples/sample_mdl.json") {
+    if let Ok(mdl) = Mdl::load_any() {
         let pipe = SagPipeline {
             mdl: Arc::new(mdl),
             gateway: Arc::new(gw),
