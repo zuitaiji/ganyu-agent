@@ -148,14 +148,17 @@ if (-not $NoAlias) {
   Write-Host "[install] 已创建别名: $aliasPath"
 }
 
-# ---- PATH 提示 ---------------------------------------------------------------
-$inPath = ($env:Path -split ";") -contains $binDir
-if (-not $inPath) {
-  Write-Host ""
-  Write-Host "[install] 请把以下目录加入 PATH（当前会话）：" -ForegroundColor Cyan
-  Write-Host ('          $env:Path = "' + $binDir + ';$env:Path"')
-  Write-Host ('          永久生效：setx PATH "' + $binDir + ';%PATH%"')
+# ---- PATH 注册（用户级，装完即用；幂等） ------------------------------------
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($userPath -notlike "*$binDir*") {
+  $newPath = if ($userPath) { "$userPath;$binDir" } else { $binDir }
+  [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+  Write-Host "[install] 已将 $binDir 写入用户级 PATH（新终端生效）" -ForegroundColor Green
+} else {
+  Write-Host "[install] $binDir 已在用户级 PATH"
 }
+# 当前会话同步：本会话立即可用 ganyu，无需重启终端
+if ($env:Path -notlike "*$binDir*") { $env:Path = "$binDir;$env:Path" }
 
 Write-Host ""
 Write-Host "[install] 安装完成。快速体验：" -ForegroundColor Green
