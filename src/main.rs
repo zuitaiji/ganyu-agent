@@ -148,6 +148,11 @@ async fn main() -> GanyuResult<()> {
 
     // 工程化配置面：集中读取 GANYU_*，据此启用缓存/限速/审计。
     let cfg = ganyu_agent::config::GanyuConfig::from_env();
+    // 配置自愈：~/.ganyu/config.toml 缺失时自动生成模板（目录被清理后不再静默失联）。
+    if let Some(p) = ganyu_agent::config::ensure_config_template() {
+        eprintln!("[ganyu] 未找到配置文件，已自动生成模板：{p}");
+        eprintln!("        填入 [model] 的 api_key 后即可对话（或运行 ganyu-agent setup 交互配置）");
+    }
     // 一站式：从 ~/.ganyu/config.toml 加载模型配置（已设置的环境变量优先）。
     // 凭据改为下方 read_model_config 显式取用（F-10），不再全局 set_var。
     let audit = Arc::new(ganyu_agent::observe::AuditLog::from_config());

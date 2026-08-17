@@ -141,6 +141,33 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
     ("GANYU_CONFIG", "配置文件路径（默认 ~/.ganyu/config.toml）"),
 ];
 
+/// 配置自愈：配置文件不存在时自动生成可编辑模板（**不含密钥**）。
+///
+/// 解决根因：`~/.ganyu` 被外部清理后，配置会静默丢失导致"即开即用失效"。
+/// 启动时调用本函数，目录被删后首次运行即自动重建模板，用户只需填 key
+/// （或直接运行 `ganyu-agent setup`）。
+///
+/// 返回生成的文件路径；文件已存在或生成失败返回 `None`。
+pub fn ensure_config_template() -> Option<String> {
+    let path = config_path()?;
+    if std::path::Path::new(&path).exists() {
+        return None;
+    }
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let tmpl = "# ganyu-agent 配置模板（自动生成；填好即可对话，或运行 ganyu-agent setup）\n\
+                [model]\n\
+                base_url = \"https://api.openai.com/v1\"\n\
+                api_key = \"\"\n\
+                model = \"gpt-4o-mini\"\n";
+    if std::fs::write(&path, tmpl).is_ok() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
 /// 从配置文件加载模型配置（对标 OpenClaw `config.yaml` / Hermes 配置文件），
 /// 实现「一站式」：写一次 `~/.ganyu/config.toml`，之后直接 `ganyu-agent chat` 即可对话。
 ///
