@@ -1,5 +1,7 @@
 # ganyu-agent
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 > 有温度、能自进化、可拓展、可自愈的**完备 Agent 系统**（Rust），**开箱即用**。
 > 写一次配置文件 → `ganyu-agent chat` 直接对话（OpenClaw/Hermes 式体验）。
 > 范式对标：Pi（极简 harness）× OpenClaw（执行网关）× Hermes（防护+闭环）× Prime（诚实边界）。
