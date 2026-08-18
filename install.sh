@@ -22,6 +22,11 @@ GANYU_REPO="${GANYU_REPO:-https://github.com/zuitaiji/ganyu-agent}"
 GANYU_BRANCH="${GANYU_BRANCH:-main}"
 CREATE_ALIAS="${GANYU_CREATE_ALIAS:-1}"
 
+# 官方发布公钥（ed25519 原始 32 字节 hex）。与 scripts/sign-release.py 签名端、
+# src/main.rs 的 verify_update_signature 验签端共用同一把钥匙。
+# 轮换流程见 docs/update-signing.md §3。
+GANYU_OFFICIAL_PUBKEY="${GANYU_UPDATE_PUBKEY:-d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec}"
+
 # ---- 简易参数解析 -------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -53,6 +58,51 @@ detect_asset() {
     MINGW*|MSYS*|CYGWIN*) echo "ganyu-agent-windows-x86_64.tar.gz" ;;
     *) echo "不支持的平台: $os/$arch" >&2; exit 1 ;;
   esac
+}
+
+# ---- ed25519 签名校验（R-1 信任锚点） ------------------------------------------
+# 依赖 python3(cryptography) 或 openssl；二者皆无则拒绝安装（fail-closed）。
+# $1=资产文件 $2=.sig 文件 $3=公钥 hex
+verify_ed25519() {
+  local file="$1" sig="$2" pub="$3" vf rc
+  if [[ ! -s "$sig" ]]; then echo "[install] ❌ .sig 文件为空或缺失" >&2; return 1; fi
+  if command -v python3 >/dev/null 2>&1; then
+    vf="$(mktemp)"
+    cat >"$vf" <<'PYEOF'
+import sys, binascii
+pub = binascii.unhexlify(sys.argv[1])
+msg = open(sys.argv[2], 'rb').read()
+sig = open(sys.argv[3], 'rb').read()
+if len(sig) != 64:
+    sys.stderr.write("sig length != 64\n"); sys.exit(1)
+try:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    Ed25519PublicKey.from_public_bytes(pub).verify(sig, msg)
+except ImportError:
+    sys.exit(2)   # cryptography 缺失，交由 openssl 兜底
+except Exception as e:
+    sys.stderr.write("ed25519 verify failed: %s\n" % e); sys.exit(1)
+PYEOF
+    python3 "$vf" "$pub" "$file" "$sig"; rc=$?
+    rm -f "$vf"
+    if [[ $rc -eq 0 ]]; then return 0; fi
+    if [[ $rc -ne 2 ]]; then return 1; fi   # 真失败（非依赖缺失）
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    # 原始 32 字节公钥 → SubjectPublicKeyInfo DER → PEM
+    local der pem
+    der="$(printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00' | cat - <(printf '%s' "$pub" | xxd -r -p) | base64 -w0)"
+    pem="-----BEGIN PUBLIC KEY-----
+$der
+-----END PUBLIC KEY-----"
+    if printf '%s\n' "$pem" | openssl pkeyutl -verify -pubin -rawin -in "$file" -sigfile "$sig" >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
+  fi
+  echo "[install] ❌ 无 python3(cryptography) 也无 openssl，无法校验 ed25519 签名，拒绝安装" >&2
+  echo "[install]   请安装 python3+cryptography 或 openssl 后重试，或手动核对签名。" >&2
+  return 1
 }
 
 # ---- 路径一：免编译下载（默认） ------------------------------------------------
@@ -97,6 +147,20 @@ if [[ -z "$GANYU_FEATURES" ]]; then
     fi
   else
     echo "[install] ⚠️ 未获取到 sha256 校验文件（跳过校验）"
+  fi
+
+  # 供应链强校验（R-1）：下载配套 .sig 并用官方公钥验签，缺失或失败均拒绝安装。
+  echo "[install] 校验 ed25519 签名（R-1）"
+  if curl -fsSL "$DL_URL.sig" -o "$TMP/$ASSET.sig" 2>/dev/null && [[ -s "$TMP/$ASSET.sig" ]]; then
+    if verify_ed25519 "$TMP/$ASSET" "$TMP/$ASSET.sig" "$GANYU_OFFICIAL_PUBKEY"; then
+      echo "[install] ✅ ed25519 签名校验通过"
+    else
+      echo "[install] ❌ ed25519 签名校验失败：资产来源不可信，已拒绝安装！" >&2
+      exit 1
+    fi
+  else
+    echo "[install] ❌ 未获取到 .sig 签名文件（发布不完整），拒绝安装" >&2
+    exit 1
   fi
 
   case "$ASSET" in

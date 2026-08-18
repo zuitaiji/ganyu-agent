@@ -53,11 +53,12 @@ export GANYU_MEM_KEY='<≥16字符强口令>' GANYU_RATE_PER_MIN=60 GANYU_AUDIT=
 **[docs/update-signing.md](docs/update-signing.md)**：
 
 ```
-GANYU_UPDATE_PUBKEY=3875bdb99b8fea88084baa75335660083903775f52969ff289efbbdf0c5afbd1
+GANYU_UPDATE_PUBKEY=d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec
 ```
 
-> 该公钥为演示密钥，生产请按文档轮换。`GANYU_UPDATE_ALLOW_NOCHECK=1` 仅为
-> 完全离线/自托管场景的逃生舱口，不绕过签名校验。
+> ✅ 2026-08-18 轮换后的**生产公钥**（演示公钥 `3875bdb…` 已作废）。
+> 首次安装的 `install.sh`/`install.ps1` 也已硬编码该公钥并验签（信任锚点）。
+> `GANYU_UPDATE_ALLOW_NOCHECK=1` 仅为完全离线/自托管场景的逃生舱口，不绕过签名校验。
 
 ## 3. 部署建议（诚实边界）
 

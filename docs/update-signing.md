@@ -14,20 +14,27 @@
 ## 1. 官方发布公钥（请核对后写入环境）
 
 ```
-GANYU_UPDATE_PUBKEY=3875bdb99b8fea88084baa75335660083903775f52969ff289efbbdf0c5afbd1
+GANYU_UPDATE_PUBKEY=d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec
 ```
 
-> ⚠️ 这是本次加固**新生成**的演示密钥。生产使用前请**自行轮换**（见 §5），并把
-> 下方新公钥替换到本文件与用户指引中。配套私钥种子**只存在于 CI Secret**，绝不入库。
+> ✅ 这是 2026-08-18 轮换后的**生产公钥**（由 `scripts/sign-release.py gen` 生成）。
+> 配套私钥种子 `GANYU_UPDATE_SIGN_KEY` **仅存在于 CI Secret**，绝不入库。
+> 早期加固阶段生成的演示公钥 `3875bdb99b8fea88084baa75335660083903775f52969ff289efbbdf0c5afbd1`
+> 已**作废**（种子曾在对话历史中明文出现，视为泄露），请勿使用。
 
 用户启用强校验只需：
 
 ```bash
-export GANYU_UPDATE_PUBKEY=3875bdb99b8fea88084baa75335660083903775f52969ff289efbbdf0c5afbd1
+export GANYU_UPDATE_PUBKEY=d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec
 ganyu-agent update        # 自动下载 <url>.sig 并验签；缺失/不符则拒绝更新
 ```
 
 未设置该变量时，`update` 仅做同源 sha256（防御纵深但**不能**防恶意发布方），并显式告警。
+
+> **信任锚点**：不仅运行时 `ganyu update` 验签，**首次安装的 `install.sh` / `install.ps1`
+> 也会在解包前下载 `<asset>.sig` 并用上面的官方公钥验签**（缺失或失败直接拒绝安装，
+> fail-closed）。官方公钥已硬编码进两个安装脚本（可用 `GANYU_UPDATE_PUBKEY` 覆盖）。
+> 这样整条供应链——从首次安装到后续自更新——都锚定在同一把公钥上。
 
 ---
 
@@ -61,7 +68,9 @@ python scripts/sign-release.py gen
 ```
 
 1. 把新 `GANYU_UPDATE_SIGN_KEY` 写入仓库 Secret（替换旧的）。
-2. 把新 `GANYU_UPDATE_PUBKEY` 更新到本文件 §1 与任何用户文档。
+2. 把新 `GANYU_UPDATE_PUBKEY` 更新到本文件 §1、用户指引，以及
+   `install.sh` 的 `GANYU_OFFICIAL_PUBKEY` 与 `install.ps1` 的 `$OfficialPubKey`
+   （两个安装脚本都已硬编码官方公钥作为信任锚点，轮换时必须同步改这 3 处）。
 3. 打新 tag 发版：新资产用新密钥签名，旧资产仍在旧发布里（旧公钥已失效的话，旧发布应重新签名或归档）。
 
 > 轮换窗口：新旧公钥并存期尽量短。若必须同时支持两把钥匙，可在 `verify_update_signature`
@@ -77,7 +86,7 @@ curl -LO https://github.com/<you>/ganyu-agent/releases/download/v0.1.0/ganyu-age
 curl -LO https://github.com/<you>/ganyu-agent/releases/download/v0.1.0/ganyu-agent-linux-x86_64.tar.gz.sig
 
 python scripts/sign-release.py verify ganyu-agent-linux-x86_64.tar.gz \
-  3875bdb99b8fea88084baa75335660083903775f52969ff289efbbdf0c5afbd1
+  d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec
 # → [verify] 签名有效 ✅
 ```
 

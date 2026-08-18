@@ -89,10 +89,10 @@ fn verify_update_signature(pubkey: &[u8], msg: &[u8], sig: &[u8]) -> bool {
 /// 防止任一侧悄悄改掉算法/编码导致发布签名整体失效。
 #[cfg(all(test, feature = "network"))]
 mod update_sig_interop_tests {
-    const PUB_HEX: &str = "3875bdb99b8fea88084baa75335660083903775f52969ff289efbbdf0c5afbd1";
+    const PUB_HEX: &str = "d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec";
     const MSG: &[u8] = b"ganyu-agent update payload integrity marker";
     const SIG_HEX: &str =
-        "a746d203d0e008600eec6032d807c05477cdcc485390cad6bcb64eed0cee483a1812ae8cad9659528f6701f21c06306abc313d6a5db1b9c80f5325ab5d00540d";
+        "f7fb2b375ab0c024d3b859cfabb1a092322bbda7f45695d14521d40e81bd117a5a7f456d5d86aa979df0262a67019031266bb7b335966eac3d4dcccb4d4fa103";
 
     #[test]
     fn script_signature_is_accepted_by_ring() {

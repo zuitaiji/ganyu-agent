@@ -128,14 +128,15 @@ R-1 验签端已就绪，发布侧配套**本阶段同步完成**，端到端闭
    - 未配置该 Secret → `Sign` 步骤 `::error::` 失败、拒绝发版（安全默认）。
 3. **互操作回归** `src/main.rs::update_sig_interop_tests`：固定向量（脚本签名 → `ring` 验签）随每次 `cargo test --features hardened` 自动回归，防止任一侧算法/编码漂移导致全网签名失效。
 4. **用户侧**：把官方公钥（见 `docs/update-signing.md` §1）写入 `GANYU_UPDATE_PUBKEY` 后 `ganyu update` 即启用强校验；未设置时仅同源 sha256 并告警。
+5. **信任锚点闭环（后续补充）**：首次安装的 `install.sh` / `install.ps1` 同样在解包前下载 `<asset>.sig` 并用**硬编码的官方公钥**验签（缺失或失败直接拒绝安装，fail-closed）。这样从首次安装到后续自更新，整条供应链锚定在同一把公钥上——仅运行时验签会留下"第一次下载未校验"的信任缺口，现已堵上。
 
-官方发布公钥（演示密钥，生产请按 `docs/update-signing.md` §3 轮换）：
+官方发布公钥（**2026-08-18 轮换后的生产密钥**；旧演示公钥 `3875bdb…` 已作废）：
 
 ```
-GANYU_UPDATE_PUBKEY=3875bdb99b8fea88084baa75335660083903775f52969ff289efbbdf0c5afbd1
+GANYU_UPDATE_PUBKEY=d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec
 ```
 
-> 契约一致性：验签端用 `ring::signature::ED25519`（原始 32B 公钥 / 原始 64B 签名），签名端严格产出相同格式，二者经固定向量测试互证。
+> 契约一致性：验签端用 `ring::signature::ED25519`（原始 32B 公钥 / 原始 64B 签名），签名端严格产出相同格式，二者经固定向量测试互证。轮换时须同步更新 3 处硬编码：本文件/§6、`install.sh` 的 `GANYU_OFFICIAL_PUBKEY`、`install.ps1` 的 `$OfficialPubKey`（详见 `docs/update-signing.md` §3）。
 
 ---
 
@@ -162,6 +163,10 @@ GANYU_UPDATE_PUBKEY=3875bdb99b8fea88084baa75335660083903775f52969ff289efbbdf0c5a
 | `docs/security_fixes.md` | 追加「第二阶段加固（HARD-1~3 / R-1）」章节 |
 | `docs/security_audit.md` | 追加 R-1~R-9 残余风险登记与第二阶段结论 |
 | `docs/config-guide.md` | 更正对已删除 `load_model_config` 的引用 |
+| `scripts/sign-release.py` | Ed25519 签名工具（R-1 签名端，RFC 8032） |
+| `.github/workflows/release.yml` | 每平台 build job 增 `Sign` 步骤，`.sig` 随包发布（fail-closed） |
+| `src/main.rs` | 追加 `update_sig_interop_tests` 固定向量（脚本↔ring 互操作回归） |
+| `install.sh` / `install.ps1` | **信任锚点**：解包前下载 `<asset>.sig` 并用硬编码官方公钥验签（fail-closed），堵住首次安装未校验缺口 |
 
 ---
 

@@ -32,6 +32,10 @@ $Branch   = if ($env:GANYU_BRANCH)   { $env:GANYU_BRANCH }   else { "main" }
 $Dev      = $env:GANYU_DEV -eq "1"
 $NoAlias  = $env:GANYU_NOALIAS -eq "1"
 
+# 官方发布公钥（ed25519 原始 32 字节 hex）。与 scripts/sign-release.py、src/main.rs
+# 验签端共用；可用 GANYU_UPDATE_PUBKEY 覆盖。轮换见 docs/update-signing.md §3。
+$OfficialPubKey = if ($env:GANYU_UPDATE_PUBKEY) { $env:GANYU_UPDATE_PUBKEY } else { "d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec" }
+
 if (-not $Prefix) { $Prefix = Join-Path $HOME ".ganyu" }
 $binDir = Join-Path $Prefix "bin"
 $binPath = Join-Path $binDir "ganyu-agent.exe"
@@ -43,6 +47,56 @@ function Get-AssetName {
     return "ganyu-agent-windows-arm64.tar.gz"
   }
   return "ganyu-agent-windows-x86_64.tar.gz"
+}
+
+# ---- ed25519 签名校验（R-1 信任锚点） ------------------------------------------
+# 依赖 python3(cryptography) 或 openssl；二者皆无则拒绝安装（fail-closed）。
+function Test-Ed25519Signature {
+  param($FilePath, $SigPath, $PubHex)
+  if (-not (Test-Path $SigPath) -or (Get-Item $SigPath).Length -eq 0) {
+    Write-Error ".sig 文件为空或缺失"
+    return $false
+  }
+  # 1) python3 + cryptography
+  $py = Get-Command python3 -ErrorAction SilentlyContinue
+  if ($py) {
+    $vf = Join-Path ([IO.Path]::GetTempPath()) "ganyu_verify_$(Get-Random).py"
+    @"
+import sys, binascii
+pub = binascii.unhexlify(sys.argv[1])
+msg = open(sys.argv[2], 'rb').read()
+sig = open(sys.argv[3], 'rb').read()
+if len(sig) != 64:
+    sys.stderr.write('sig length != 64\n'); sys.exit(1)
+try:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    Ed25519PublicKey.from_public_bytes(pub).verify(sig, msg)
+except ImportError:
+    sys.exit(2)
+except Exception as e:
+    sys.stderr.write('ed25519 verify failed: %s\n' % e); sys.exit(1)
+"@ | Set-Content -Path $vf -Encoding UTF8
+    & python3 $vf $PubHex $FilePath $SigPath
+    $rc = $LASTEXITCODE
+    Remove-Item $vf -Force -ErrorAction SilentlyContinue
+    if ($rc -eq 0) { return $true }
+    if ($rc -ne 2) { return $false }   # 真失败（非依赖缺失）
+  }
+  # 2) openssl
+  $ossl = Get-Command openssl -ErrorAction SilentlyContinue
+  if ($ossl) {
+    $bytes = @()
+    for ($i = 0; $i -lt $PubHex.Length; $i += 2) { $bytes += [Convert]::ToByte($PubHex.Substring($i, 2), 16) }
+    $der = [Convert]::ToBase64String(([byte[]]@(0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00) + $bytes))
+    $pemPath = Join-Path ([IO.Path]::GetTempPath()) "ganyu_pub_$(Get-Random).pem"
+    "-----BEGIN PUBLIC KEY-----`n$der`n-----END PUBLIC KEY-----" | Set-Content -Path $pemPath -Encoding ASCII
+    & openssl pkeyutl -verify -pubin -rawin -in $FilePath -sigfile $SigPath -inkey $pemPath 2>$null
+    $rc = $LASTEXITCODE
+    Remove-Item $pemPath -Force -ErrorAction SilentlyContinue
+    return ($rc -eq 0)
+  }
+  Write-Error "无 python3(cryptography) 也无 openssl，无法校验 ed25519 签名，拒绝安装"
+  return $false
 }
 
 # ---- 路径一：免编译下载（默认） ----------------------------------------------
@@ -81,6 +135,23 @@ if (-not $Features) {
     Write-Host "[install] 警告：未获取到 sha256 校验文件（跳过校验）" -ForegroundColor Yellow
   }
   Remove-Item $shaPath -Force -ErrorAction SilentlyContinue
+
+  # 供应链强校验（R-1）：下载配套 .sig 并用官方公钥验签，缺失或失败均拒绝安装。
+  $sigPath = Join-Path ([IO.Path]::GetTempPath()) "$asset.sig"
+  Write-Host "[install] 校验 ed25519 签名（R-1）" -ForegroundColor Green
+  try {
+    Invoke-WebRequest -Uri "$downloadUrl.sig" -OutFile $sigPath -UseBasicParsing
+    if (Test-Ed25519Signature -FilePath $zipPath -SigPath $sigPath -PubHex $OfficialPubKey) {
+      Write-Host "[install] ed25519 签名校验通过" -ForegroundColor Green
+    } else {
+      Remove-Item $zipPath, $sigPath -Force -ErrorAction SilentlyContinue
+      Write-Error "ed25519 签名校验失败：资产来源不可信，已拒绝安装！"
+    }
+  } catch {
+    Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+    Write-Error "未获取到 .sig 签名文件（发布不完整），拒绝安装"
+  }
+  Remove-Item $sigPath -Force -ErrorAction SilentlyContinue
 
   # Windows 10 1803+ 自带 bsdtar；tar.gz 统一解压（比 Expand-Archive 更稳）。
   & tar -xzf $zipPath -C $binDir
