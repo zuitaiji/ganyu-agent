@@ -68,10 +68,10 @@
 | R-3 | OpenViking 记忆代理 `OV_BASE` 可能走 http 明文外发 | Low | **接受（记录）**：默认本地 `:1933` 服务；建议生产启用 TLS/内网隔离 | `core/memory.rs::OpenVikingMemory` |
 | R-4 | `GANYU_MEM_KEY` 以进程 env 存在，崩溃转储/子进程可泄漏 | Low | **接受（记录）**：比 F-10 全局 env 已收敛；建议 OS 密钥环/KMS 注入原始 32B 密钥 | `core/memory.rs::Cipher::from_env` |
 | R-5 | tar 解包仅拒 `/`/`\`/`..`，未覆盖 Windows 盘符绝对路径（`C:\`/`D:/`） | Medium | **已加固**：`is_safe_archive_entry` 拒绝对/反斜杠绝对、含 `..`、盘符绝对路径 | `security.rs::is_safe_archive_entry` |
-| R-6 | 黑板（BlackboardWorkflow）共享快照无硬上限，长任务可累积过大 | Low | **接受（记录）**：已被 `max_rounds` 间接有界；建议加快照字节/条目上限 | `core/workflow/blackboard.rs` |
+| R-6 | 黑板（BlackboardWorkflow）共享快照无硬上限，长任务可累积过大 | Low | **已加固**：`board_set` 设 256 KiB 字节硬上限，超限拒绝写入（fail-soft） | `core/unit.rs::board_set` |
 | R-7 | 死代码 `load_model_config()` 仍含全局 `set_var("OPENAI_API_BASE/MODEL")` | Low | **已清理**：删除函数，消除潜在全局 env 泄漏面 | `config.rs`（已移除） |
-| R-8 | `write_model_config` 仅在 unix 收紧 0600，Windows 未做等价 ACL 收紧 | Info | **接受（记录）**：Windows 单用户场景风险低；建议 `icacls` 显式限属主 | `config.rs::write_model_config` |
-| R-9 | Windows 下记忆/配置目录未做等价权限隔离 | Info | **接受（记录）**：同 R-8；属平台权限模型差异 | `config.rs` / `main.rs` |
+| R-8 | `write_model_config` 仅在 unix 收紧 0600，Windows 未做等价 ACL 收紧 | Info | **已加固**：跨平台 `security::restrict_file_permissions`（unix 0600 / Windows `icacls` 限属主），config + gateway token 写入后调用 | `security.rs` / `config.rs` |
+| R-9 | Windows 下记忆/配置目录未做等价权限隔离 | Info | **已加固**：记忆加密文件 `save` 写临时文件后 `restrict_file_permissions` 再 rename | `core/memory.rs::save` |
 
 ---
 
@@ -102,9 +102,18 @@
 - 流程：若设置 `GANYU_UPDATE_PUBKEY`（32B hex）→ 下载 `<url>.sig` → 对下载资产字节验签（64B）；缺 `.sig`/不符 → 失败闭环 `exit(1)`；未设置 → 仅同源 sha256 并明确告警；
 - 与既有 sha256 同源校验形成**防御纵深**：签名校验发布方真伪，sha256 校验传输完整。
 
+### 4.5 第三阶段加固：R-6 / R-8 / R-9（本地 DoS 与文件权限）
+
+- **R-6 黑板字节上限**：`core/unit.rs::board_set` 增加累计字节硬上限（`MAX_BLACKBOARD_BYTES = 256 KiB`）。每次写入前估算现有快照总字节 + 本值字节，超出则拒绝本次写入并 `[security]` 告警（fail-soft：不 panic、不阻断主流程、不覆盖已有贡献）。快照因此恒有界，避免长任务 / 不可信贡献（F-06 围栏后仍有体积风险）累积撑爆共享状态。
+- **R-8/R-9 跨平台文件权限**：新增 `security::restrict_file_permissions(path)` 统一封装——
+  - Unix：`chmod 0600`（属主读写，其他无权限）；
+  - Windows：`icacls <file> /inheritance:r /grant:r %USERNAME%:(F)`，剥离继承 ACE 并仅授予当前用户完全控制，等价 Unix 0600；
+  - 失败闭环：返回 `false` 并告警，不阻断主流程。
+  - 调用点：`config::write_model_config`（config + gateway token 写入后均调用，覆盖 R-8 原缺口与 gateway token 原**无权限**缺口）、`core/memory.rs::save`（加密记忆写临时文件后收紧再原子 rename，覆盖 R-9）。
+
 ---
 
-## 5. 残余风险接受（R-3 / R-4 / R-6 / R-8 / R-9）
+## 5. 残余风险接受（R-3 / R-4）
 
 均为 Low/Info，且均在"默认本地单用户、可信发布方"威胁模型内可接受。接受理由与后续建议：
 
@@ -112,8 +121,8 @@
 |----|----------|--------------------|
 | R-3 | 默认 OV 为本地 `:1933`，不出公网；失败自动降级本地 | 生产在 OV 前加 TLS 反向代理 / 限定内网 |
 | R-4 | 已由 F-10 收敛到单点进程 env，无全局泄漏 | 用 OS 密钥环/KMS 注入原始 32B 密钥，替换 `from_env` |
-| R-6 | `max_rounds` 已间接有界 | 给黑板快照加字节/条目硬上限，防长任务累积 |
-| R-8/R-9 | Windows 单用户场景，文件默认仅属主可访问 | `write_model_config` 后 `icacls` 显式限属主（等价 unix 0600） |
+
+> R-6（黑板字节上限）、R-8/R-9（Windows 文件权限）已于**第三阶段加固**闭环，见 §4.5。
 
 ---
 

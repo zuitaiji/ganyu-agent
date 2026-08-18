@@ -8,6 +8,62 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::error::{GanyuError, GanyuResult};
 
+/// 把敏感文件权限收紧为「仅当前用户可读写」。
+///
+/// - Unix：`chmod 0600`（属主读写，其他用户无权限）。
+/// - Windows：`icacls` 剥离继承 ACE 并仅授予当前用户完全控制，等价于 Unix 0600。
+///
+/// 失败闭环：返回 `false` 并告警，但**不阻断主流程**（与 F-01 一致）。
+/// 调用方通常在写敏感文件（config / 加密记忆）后立即调用。
+pub fn restrict_file_permissions(path: impl AsRef<Path>) -> bool {
+    let path = path.as_ref();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        match std::fs::metadata(path).map(|m| m.permissions()) {
+            Ok(mut perms) => {
+                perms.set_mode(0o600);
+                std::fs::set_permissions(path, perms).is_ok()
+            }
+            Err(e) => {
+                eprintln!("[warn] 无法读取文件权限，跳过收紧: {} ({e})", path.display());
+                false
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        let Ok(username) = std::env::var("USERNAME") else {
+            eprintln!("[warn] 无法读取 USERNAME，跳过文件权限收紧: {}", path.display());
+            return false;
+        };
+        match std::process::Command::new("icacls")
+            .arg(path)
+            .args(["/inheritance:r", &format!("/grant:r{username}:(F)")])
+            .output()
+        {
+            Ok(o) if o.status.success() => true,
+            Ok(o) => {
+                eprintln!(
+                    "[warn] icacls 收紧失败: {} | {}",
+                    path.display(),
+                    String::from_utf8_lossy(&o.stderr)
+                );
+                false
+            }
+            Err(e) => {
+                eprintln!("[warn] 无法执行 icacls（缺失或无权限？）: {e}");
+                false
+            }
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        false
+    }
+}
+
 /// shell 工具是否真正放行：需 `shell` 特性编译 **且** `GANYU_ALLOW_SHELL=1`（C1 双层失败闭环）。
 pub fn shell_allowed() -> bool {
     #[cfg(feature = "shell")]
@@ -483,5 +539,19 @@ mod tests {
         assert_eq!(decode_hex("deadBEEF").unwrap(), vec![0xde, 0xad, 0xbe, 0xef]);
         assert!(decode_hex("xyz").is_none());
         assert!(decode_hex("abc").is_none()); // 奇数长度
+    }
+
+    #[test]
+    fn restrict_file_permissions_tightens() {
+        use std::io::Write;
+        let p = std::env::temp_dir()
+            .join(format!("ganyu_restrict_test_{}.tmp", std::process::id()));
+        {
+            let mut f = std::fs::File::create(&p).expect("create temp");
+            f.write_all(b"secret").expect("write temp");
+        }
+        let ok = restrict_file_permissions(&p);
+        let _ = std::fs::remove_file(&p);
+        assert!(ok, "restrict_file_permissions 应成功收紧临时文件权限");
     }
 }

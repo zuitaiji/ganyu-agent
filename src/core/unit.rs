@@ -59,8 +59,22 @@ impl RunContext {
     }
 
     /// 黑板写（每个 `Unit` 跑完会把自身结果落盘到 key=role，实现共享）。
+    ///
+    /// R-6：黑板快照设字节硬上限（默认 256 KiB）。写入后若累计超过上限，
+    /// 拒绝本次写入并告警（fail-soft，不 panic、不阻断主流程），防止长任务 /
+    /// 不可信贡献累积把共享状态撑爆（本地 DoS）。
     pub fn board_set(&self, key: &str, value: Value) {
-        self.board.lock().unwrap().insert(key.to_string(), value);
+        const MAX_BLACKBOARD_BYTES: usize = 256 * 1024;
+        let approx = format!("{value}").len();
+        let mut board = self.board.lock().unwrap();
+        let total: usize = board.values().map(|v| format!("{v}").len()).sum();
+        if total + approx > MAX_BLACKBOARD_BYTES {
+            eprintln!(
+                "[security] 黑板字节超上限({MAX_BLACKBOARD_BYTES})，拒绝写入 key={key}（防累积 DoS）"
+            );
+            return;
+        }
+        board.insert(key.to_string(), value);
     }
 
     /// 黑板全量快照（合成器读取整块黑板）。

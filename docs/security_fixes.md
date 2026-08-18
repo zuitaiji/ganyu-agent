@@ -287,6 +287,49 @@ AI 会去网上抓内容、读文件，这些“外面来的信息”里可能�
 **③ 大白话**
 自动更新原来只核对"下载的东西和官网说的一样不一样"，但官网自己要是被黑了这层就没用了。现在多加一把锁：用发布方的**数字签名**验证"这确实是官方出的、没被换成别人的"。前提是发布流水线（CI）用私钥给每个版本签名、并把公钥公示给用户配置到 `GANYU_UPDATE_PUBKEY`（见 `SECURITY-REPORT.md` 第 6 节）。
 
+## 第三阶段加固（R-6 / R-8 / R-9）
+
+> 在范围 B 落地后，继续消除已记录的 Low/Info 残余风险中最具体、收益明确的三项：
+> R-6（黑板快照无字节上限）、R-8（config Windows 权限）、R-9（记忆文件 Windows 权限）。
+> 对应报告：`docs/SECURITY-REPORT.md` §4.5。
+
+| ID | 严重度 | 文件 | 一句话 |
+|----|--------|------|--------|
+| R-6 | Low | `src/core/unit.rs` | 黑板 `board_set` 无界 HashMap → 加 256 KiB 字节硬上限，超限拒绝写入（fail-soft 告警，不 panic/不阻断） |
+| R-8 | Info | `src/security.rs` / `src/config.rs` | config + gateway token 写入后权限仅 unix 0600 → 抽 `restrict_file_permissions` 跨平台（unix 0600 / Windows `icacls` 限属主） |
+| R-9 | Info | `src/core/memory.rs` | 加密记忆文件写入后无权限收紧 → `save` 写临时文件后 `restrict_file_permissions` 再原子 rename |
+
+### R-6　黑板快照字节硬上限
+
+**① 深度根因**
+`RunContext.board` 是无界 `HashMap`，Blackboard 范式每轮把所有 agent 贡献拼成快照喂给下一轮与合成器。虽有 `max_rounds` 间接有界，但单条不可信贡献（F-06 已围栏，但体积不受控）或长任务仍可能让共享状态无限膨胀，构成本地 DoS / 上下文撑爆。
+
+**② 改了什么**
+`board_set` 增加累计字节估算（`format!("{value}").len()` 求和），超过 `MAX_BLACKBOARD_BYTES = 256 KiB` 时拒绝本次写入并打 `[security]` 告警，返回类型不变（fail-soft）。快照因此恒有界。
+
+**③ 大白话**
+黑板上每个角色写的东西现在有总大小上限（256KB）。谁要塞超大内容会被直接拒掉并提示，避免一个任务把共享黑板堆爆。
+
+### R-8 / R-9　跨平台文件权限收紧
+
+**① 深度根因**
+`write_model_config` 只在 Unix 下 `chmod 0600`，Windows 上 `chmod` 无效、文件权限依赖默认 ACL（可能继承父目录、其他用户可访问）；`write_gateway_token` 更是**完全没有**权限收紧；加密记忆文件 `save` 也无权限处理。在 Windows 多用户/共享主机场景下，含 API Key / token / 加密 blob 的文件可能被其他用户读取。
+
+**② 改了什么**
+新增 `security::restrict_file_permissions(path)`：
+- Unix：`chmod 0600`；
+- Windows：调用 `icacls <file> /inheritance:r /grant:r %USERNAME%:(F)`，剥离继承 ACE、仅授予当前用户完全控制（等价 Unix 0600）；
+- 失败闭环：返回 `false` 并告警，不阻断主流程（与 F-01 一致）。
+调用点覆盖：`write_model_config`、`write_gateway_token`（R-8 + 补 gateway token 原缺口）、`core/memory.rs::save`（R-9，临时文件收紧后原子 rename）。
+
+**③ 大白话**
+把"写完后收紧文件权限"做成一个统一函数，Unix 和 Windows 都照顾到：Windows 上用系统自带 `icacls` 把文件改成"只有你自己能看能改"，和 Linux 的 0600 一个效果。配置、网关 token、记忆文件现在都会自动收紧。
+
+### 验证（第三阶段）
+
+- `cargo check --tests --features hardened`：通过（RC=0；本机 Windows 目标，正好编译验证 `icacls` 分支）。
+- 注：沙箱拦截测试二进制执行，运行时用例计数需在可写环境 `cargo test --features hardened` 获取；本次为全量编译验证。
+
 ### 验证（第二阶段）
 
 - `cargo check --features hardened`：通过（crypto/network/secret/shell 全特性）。

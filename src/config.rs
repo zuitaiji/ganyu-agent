@@ -70,15 +70,8 @@ pub fn write_model_config(base_url: &str, api_key: &str, model: &str) -> crate::
     }
     let text = toml::to_string_pretty(&value).map_err(|e| GanyuError::Toml(e.to_string()))?;
     std::fs::write(&path, text)?;
-    // F-01：配置文件含 API Key，写后收紧为属主只读（Unix 0600）。
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(mut perms) = std::fs::metadata(&path).map(|m| m.permissions()) {
-            perms.set_mode(0o600);
-            let _ = std::fs::set_permissions(&path, perms);
-        }
-    }
+    // F-01：配置文件含 API Key，写后收紧为属主只读（Unix 0600 / Windows 等价 ACL）。
+    let _ = crate::security::restrict_file_permissions(&path);
     Ok(())
 }
 
@@ -121,6 +114,8 @@ pub fn write_gateway_token(token: &str) -> crate::GanyuResult<()> {
     }
     let text = toml::to_string_pretty(&value).map_err(|e| GanyuError::Toml(e.to_string()))?;
     std::fs::write(&path, text)?;
+    // 网关 token 属敏感凭据，写后同样收紧权限（R-8/R-9 跨平台）。
+    let _ = crate::security::restrict_file_permissions(&path);
     Ok(())
 }
 

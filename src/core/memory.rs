@@ -125,6 +125,9 @@ impl LocalMemory {
         // 先写临时文件再原子 rename，降低并发/崩溃导致文件损坏的概率（M4）。
         let tmp = format!("{}.tmp", self.path.display());
         if std::fs::write(&tmp, &payload).is_ok() {
+            // R-9：加密记忆文件含敏感 blob，写后收紧为仅属主可读写
+            // （Unix 0600 / Windows 等价 ACL），再原子 rename。
+            let _ = crate::security::restrict_file_permissions(&tmp);
             let _ = std::fs::rename(&tmp, &self.path);
         }
     }
