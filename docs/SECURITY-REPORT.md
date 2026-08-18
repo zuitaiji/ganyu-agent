@@ -117,24 +117,25 @@
 
 ---
 
-## 6. 发布流水线改造（R-1 启用前提）
+## 6. 发布流水线改造（R-1 启用前提）—— 已落地
 
-签名校验需发布侧配套。CI 发布流程（release.yml / install.ps1）应增加：
+R-1 验签端已就绪，发布侧配套**本阶段同步完成**，端到端闭环：
 
-1. **生成密钥对（一次性，离线保管私钥）**：
-   ```bash
-   # 用 openssl 或 ring 工具生成 ed25519 密钥对，私钥离线保存，公钥 hex 公示。
-   openssl ed25519 -outform DER -in key.pem -pubout 2>/dev/null | xxd -p | tr -d '\n'   # 32 字节公钥 hex
-   ```
-2. **对每个 Release 资产生成 `.sig`**：
-   ```bash
-   # 用私钥对 <asset>.tar.gz 字节签名（64 字节），随 Release 一并上传。
-   openssl pkeyutl -sign -inkey key.pem -rawin -in ganyu-agent-linux-x86_64.tar.gz \
-     | xxd -p | tr -d '\n' > ganyu-agent-linux-x86_64.tar.gz.sig
-   ```
-3. **用户侧**：把公示的公钥 hex 写入 `GANYU_UPDATE_PUBKEY` 后再 `ganyu update` 即启用强校验。
+1. **签名工具** `scripts/sign-release.py`（Python `cryptography`，标准 RFC 8032 Ed25519）：
+   - `gen` 生成密钥对（32B 种子 hex + 32B 公钥 hex）；`sign` 对资产字节输出**原始 64B** `<asset>.sig` 并自验；`verify` 本地复核；`pub` 由种子反推公钥。
+   - 缺私钥时以非零码退出（fail-closed，绝不产出未签名资产）。
+2. **CI** `.github/workflows/release.yml`：每个平台 `build` job 在 `Archive`/`Checksum` 后新增 `Sign` 步骤，读取 `secrets.GANYU_UPDATE_SIGN_KEY` 对 `<asset>.tar.gz` 签名，`.sig` 随 `.sha256` 一并上传并由 `release` job 发布。
+   - 未配置该 Secret → `Sign` 步骤 `::error::` 失败、拒绝发版（安全默认）。
+3. **互操作回归** `src/main.rs::update_sig_interop_tests`：固定向量（脚本签名 → `ring` 验签）随每次 `cargo test --features hardened` 自动回归，防止任一侧算法/编码漂移导致全网签名失效。
+4. **用户侧**：把官方公钥（见 `docs/update-signing.md` §1）写入 `GANYU_UPDATE_PUBKEY` 后 `ganyu update` 即启用强校验；未设置时仅同源 sha256 并告警。
 
-> 注意：`verify_update_signature` 使用原始 32B ed25519 公钥（与 `ring::signature::ED25519` 期望一致）。发布侧签名务必输出**原始 64B 签名**（非 PEM/ASN.1 封装），否则验签不符。
+官方发布公钥（演示密钥，生产请按 `docs/update-signing.md` §3 轮换）：
+
+```
+GANYU_UPDATE_PUBKEY=3875bdb99b8fea88084baa75335660083903775f52969ff289efbbdf0c5afbd1
+```
+
+> 契约一致性：验签端用 `ring::signature::ED25519`（原始 32B 公钥 / 原始 64B 签名），签名端严格产出相同格式，二者经固定向量测试互证。
 
 ---
 

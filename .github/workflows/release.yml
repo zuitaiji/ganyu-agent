@@ -64,6 +64,20 @@ jobs:
           cd "$TMP"
           sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
 
+      - name: Sign release asset (Ed25519, R-1)
+        shell: bash
+        env:
+          GANYU_UPDATE_SIGN_KEY: ${{ secrets.GANYU_UPDATE_SIGN_KEY }}
+        run: |
+          if [ -z "${GANYU_UPDATE_SIGN_KEY:-}" ]; then
+            echo "::error::GANYU_UPDATE_SIGN_KEY 未配置——拒绝发布未签名资产。请在仓库 Secrets 中设置 Ed25519 种子(32 字节 hex)。详见 docs/update-signing.md"
+            exit 1
+          fi
+          command -v python3 >/dev/null 2>&1 && PY=python3 || PY=python
+          "$PY" -m pip install --quiet cryptography
+          if command -v cygpath >/dev/null 2>&1; then TMP="$(cygpath -u "$RUNNER_TEMP")"; else TMP="$RUNNER_TEMP"; fi
+          "$PY" scripts/sign-release.py sign "$TMP/${{ matrix.artifact }}" --key "$GANYU_UPDATE_SIGN_KEY"
+
       - name: Upload asset
         uses: actions/upload-artifact@v4
         with:
@@ -71,6 +85,7 @@ jobs:
           path: |
             ${{ runner.temp }}/${{ matrix.artifact }}
             ${{ runner.temp }}/${{ matrix.artifact }}.sha256
+            ${{ runner.temp }}/${{ matrix.artifact }}.sig
           if-no-files-found: error
 
   release:

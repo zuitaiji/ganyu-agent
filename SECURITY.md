@@ -46,6 +46,19 @@ cargo build --release --features hardened
 export GANYU_MEM_KEY='<≥16字符强口令>' GANYU_RATE_PER_MIN=60 GANYU_AUDIT=1
 ```
 
+### 自更新签名（R-1，供应链强校验）
+
+`ganyu update` 默认仅同源 sha256；配置固定 ed25519 公钥后升级为**发布方身份校验**
+（防发布服务器/账号被接管投毒）。官方发布公钥与维护者签名/轮换流程见
+**[docs/update-signing.md](docs/update-signing.md)**：
+
+```
+GANYU_UPDATE_PUBKEY=3875bdb99b8fea88084baa75335660083903775f52969ff289efbbdf0c5afbd1
+```
+
+> 该公钥为演示密钥，生产请按文档轮换。`GANYU_UPDATE_ALLOW_NOCHECK=1` 仅为
+> 完全离线/自托管场景的逃生舱口，不绕过签名校验。
+
 ## 3. 部署建议（诚实边界）
 
 - 文件沙箱与 Landlock 是**第一道防线，不是强隔离**（对齐 Prime）；

@@ -82,6 +82,46 @@ fn verify_update_signature(pubkey: &[u8], msg: &[u8], sig: &[u8]) -> bool {
     peer.verify(msg, sig).is_ok()
 }
 
+/// 签名端（scripts/sign-release.py, cryptography, RFC 8032 Ed25519）与验签端
+/// （ring::ED25519）的互操作回归测试。固定向量由脚本对消息
+/// `"ganyu-agent update payload integrity marker"` 签名得到；每次
+/// `cargo test --features hardened` 自动验证「Python 签名」能被「Rust 验签」接受，
+/// 防止任一侧悄悄改掉算法/编码导致发布签名整体失效。
+#[cfg(all(test, feature = "network"))]
+mod update_sig_interop_tests {
+    const PUB_HEX: &str = "3875bdb99b8fea88084baa75335660083903775f52969ff289efbbdf0c5afbd1";
+    const MSG: &[u8] = b"ganyu-agent update payload integrity marker";
+    const SIG_HEX: &str =
+        "a746d203d0e008600eec6032d807c05477cdcc485390cad6bcb64eed0cee483a1812ae8cad9659528f6701f21c06306abc313d6a5db1b9c80f5325ab5d00540d";
+
+    #[test]
+    fn script_signature_is_accepted_by_ring() {
+        let pubkey = ganyu_agent::security::decode_hex(PUB_HEX).unwrap();
+        let sig = ganyu_agent::security::decode_hex(SIG_HEX).unwrap();
+        assert_eq!(pubkey.len(), 32);
+        assert_eq!(sig.len(), 64);
+        assert!(
+            super::verify_update_signature(&pubkey, MSG, &sig),
+            "ring 必须接受 sign-release.py 产出的 ed25519 签名"
+        );
+    }
+
+    #[test]
+    fn tampered_signature_is_rejected_by_ring() {
+        let pubkey = ganyu_agent::security::decode_hex(PUB_HEX).unwrap();
+        let mut sig = ganyu_agent::security::decode_hex(SIG_HEX).unwrap();
+        sig[0] ^= 0xff;
+        assert!(!super::verify_update_signature(&pubkey, MSG, &sig));
+    }
+
+    #[test]
+    fn wrong_message_is_rejected_by_ring() {
+        let pubkey = ganyu_agent::security::decode_hex(PUB_HEX).unwrap();
+        let sig = ganyu_agent::security::decode_hex(SIG_HEX).unwrap();
+        assert!(!super::verify_update_signature(&pubkey, b"different message", &sig));
+    }
+}
+
 fn default_memory_path() -> std::path::PathBuf {
     let base = std::env::var("GANYU_HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
