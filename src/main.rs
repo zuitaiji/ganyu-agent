@@ -14,7 +14,7 @@ use std::sync::Arc;
 use ganyu_agent::core::llm::{DynBackend, LlmBackend, LocalBackend, Message};
 #[cfg(feature = "network")]
 use ganyu_agent::core::llm::OpenAiBackend;
-use ganyu_agent::core::loop_::{LlmReasoner, LocalReasoner, Step};
+use ganyu_agent::core::loop_::{LlmReasoner, LocalReasoner, Reasoner, Step};
 use ganyu_agent::core::memory::{DynMemory, LocalMemory};
 use ganyu_agent::core::unit::{RunContext, Unit};
 use ganyu_agent::core::workflow::{
@@ -952,7 +952,7 @@ async fn main() -> GanyuResult<()> {
                 tools.clone(),
                 skills.clone(),
             );
-            let wf = build_workflow(&mode, &ctx, &agent)?;
+            let wf = build_workflow(&mode, &ctx, &agent, has_creds)?;
             println!("session: {session}");
             println!("mode: {}", wf.mode());
             let out = wf.run(&ctx, &Value(query)).await?;
@@ -1031,17 +1031,25 @@ fn print_trace(agent: &ganyu_agent::core::Agent) {
 /// 按范式名构造对应 `Workflow`。所有单元复用同一份网关/记忆/工具/技能/会话（Arc 克隆）。
 fn build_workflow(
     mode: &str,
-    _ctx: &RunContext,
+    ctx: &RunContext,
     base: &Agent,
+    has_creds: bool,
 ) -> GanyuResult<Arc<dyn Workflow>> {
     // 角色化构造一个 Unit（Agent），共享 base 的全部后端。
+    // 推理器选择（对齐 REPL，F-10）：配置了凭据 → LlmReasoner 接真模型（多轮深思）；
+    // 否则 → LocalReasoner 离线确定性决策（工具解析 + 本地兜底，保证任何环境可用）。
+    let reasoner: Arc<dyn Reasoner> = if has_creds {
+        Arc::new(LlmReasoner::new(ctx.gateway.clone()))
+    } else {
+        Arc::new(LocalReasoner)
+    };
     let mk = |role: &str| -> Arc<dyn Unit> {
         Arc::new(Agent::with_role(
             base.gateway.clone(),
             base.memory.clone(),
             base.tools.clone(),
             base.skills.clone(),
-            Arc::new(LocalReasoner),
+            reasoner.clone(),
             base.session,
             role,
         ))
