@@ -4,7 +4,7 @@ description: 走完整发布闭环（CI → tag → release → review）
 
 # /release
 
-严格遵循 `.workbuddy/rules/release.md`：
+严格遵循 `.agents/rules/release.md`：
 
 ```bash
 git commit -m "..." && git push origin main

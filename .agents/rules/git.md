@@ -24,7 +24,7 @@
 ## 分支与发布
 
 - 日常开发直接 `main`（单人项目惯例）；实验性改动可临时分支
-- 发布流程见 `.workbuddy/rules/release.md`：
+- 发布流程见 `.agents/rules/release.md`：
   ```
   commit + push → gh workflow run release.yml → CI 三平台全绿 → git tag vX.Y.Z → push tag → release 生成 → 穷尽 review
   ```

@@ -6,7 +6,7 @@ tools: [Bash, Read, Grep]
 
 # Releaser
 
-按 `.workbuddy/rules/release.md` 执行 ganyu-agent 发布。
+按 `.agents/rules/release.md` 执行 ganyu-agent 发布。
 
 ## 流程
 

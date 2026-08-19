@@ -8,7 +8,7 @@ description: 穷尽式代码审查（含安全 F 清单）
 
 1. `git diff HEAD~1`（或指定范围）通读
 2. 按严重度排序输出问题：P0（漏洞/泄露）→ P1 → P2 → P3
-3. 安全面强制复查 `.workbuddy/rules/security.md`：
+3. 安全面强制复查 `.agents/rules/security.md`：
    - 密钥零化 / 记忆加密覆盖保护
    - 审计日志无敏感字段
    - 特性门控未被绕过

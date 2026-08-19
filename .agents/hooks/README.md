@@ -1,4 +1,4 @@
-# .workbuddy/hooks/ — 开发钩子
+# .agents/hooks/ — 开发钩子
 
 > 当前仓库未启用 git hooks（单人项目 + CI 兜底）。本目录为范本，启用时按需挂接。
 
@@ -29,5 +29,5 @@ cargo test
 ## 约定
 
 - 钩子脚本只做门控（拒绝坏结果），不自动改写代码
-- 钩子逻辑与 `.workbuddy/rules/` 保持一致，避免双规范漂移
+- 钩子逻辑与 `.agents/rules/` 保持一致，避免双规范漂移
 - CI（release.yml）是最终权威：本地钩子失败 ≠ 跳过，CI 仍会全量验证

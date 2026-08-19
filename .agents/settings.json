@@ -28,7 +28,7 @@
     "_kill_flag.txt"
   ],
   "notes": {
-    "skillsDir": "顶层 skills/ = ganyu 运行时技能库（nomifun，勿混入开发辅助技能）；开发辅助技能放 .workbuddy/skills/",
+    "skillsDir": "顶层 skills/ = ganyu 运行时技能库（nomifun，勿混入开发辅助技能）；开发辅助技能放 .agents/skills/",
     "configRoot": "用户级配置 ~/.ganyu/config.toml + GANYU_* env，见 docs/config-guide.md"
   }
 }
