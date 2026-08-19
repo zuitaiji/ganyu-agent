@@ -308,6 +308,7 @@ dependencies = [
  "rand 0.8.7",
  "regex",
  "reqwest",
+ "ring",
  "rpassword",
  "serde",
  "serde_json",
