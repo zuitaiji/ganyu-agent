@@ -74,7 +74,9 @@ jobs:
             exit 1
           fi
           command -v python3 >/dev/null 2>&1 && PY=python3 || PY=python
-          "$PY" -m pip install --quiet cryptography
+          # PEP 668（externally-managed，macOS Homebrew/系统 python）需 --break-system-packages；
+          # 失败降级普通安装（Ubuntu/Windows 无该限制）。
+          "$PY" -m pip install --quiet --break-system-packages cryptography 2>/dev/null || "$PY" -m pip install --quiet cryptography
           if command -v cygpath >/dev/null 2>&1; then TMP="$(cygpath -u "$RUNNER_TEMP")"; else TMP="$RUNNER_TEMP"; fi
           "$PY" scripts/sign-release.py sign "$TMP/${{ matrix.artifact }}" --key "$GANYU_UPDATE_SIGN_KEY"
 
