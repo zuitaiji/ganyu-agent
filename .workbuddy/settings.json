@@ -1,0 +1,34 @@
+{
+  "name": "ganyu-agent",
+  "language": "rust",
+  "edition": "2021",
+  "build": {
+    "test": "cargo test",
+    "check": "cargo clippy --all-targets -- -D warnings",
+    "fmt": "cargo fmt --check",
+    "buildHardened": "cargo build --features hardened",
+    "diagnose": "cargo run -- doctor"
+  },
+  "features": {
+    "default": ["crypto", "secret"],
+    "explicitOnly": ["network", "shell", "sandbox"],
+    "combo": "hardened = network + crypto + secret + shell"
+  },
+  "forbidden": [
+    "git reset --hard",
+    "git clean -f",
+    "git push --force",
+    "删除 target/ 或 .git 之外目录的破坏性命令"
+  ],
+  "runtimeData": [
+    ".ganyu_memory.json",
+    "*.ganyu_*.json",
+    ".ganyu_workspace/",
+    "_unlock.txt",
+    "_kill_flag.txt"
+  ],
+  "notes": {
+    "skillsDir": "顶层 skills/ = ganyu 运行时技能库（nomifun，勿混入开发辅助技能）；开发辅助技能放 .workbuddy/skills/",
+    "configRoot": "用户级配置 ~/.ganyu/config.toml + GANYU_* env，见 docs/config-guide.md"
+  }
+}

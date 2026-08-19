@@ -82,6 +82,8 @@ install.sh / install.ps1 · SECURITY.md · Cargo.toml（特性矩阵）
 | [docs/usage.md](docs/usage.md) | CLI 使用（setup/model/update/gateway/REPL/doctor/全部子命令） |
 | [docs/architecture.md](docs/architecture.md) | 架构（对标范式） |
 | [docs/development.md](docs/development.md) | 开发/扩展/**发布流程（CI+tag）**/贡献 |
+| [AGENTS.md](AGENTS.md) | **代理开发入口**（启动工作流/验证命令/完成定义） |
+| [.workbuddy/](.workbuddy/) | **配置收拢**：rules/（coding·security·git·release）· commands/ · agents/ · hooks/ · settings.json |
 | [SECURITY.md](SECURITY.md) | 安全基线（12 层防线） |
 | docs/ADR-001~008 | 架构决策记录 |
 
