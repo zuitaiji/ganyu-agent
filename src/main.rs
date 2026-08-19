@@ -92,7 +92,7 @@ mod update_sig_interop_tests {
     const PUB_HEX: &str = "241db1db27d3c19c58df6a35de52a158080e310bdeb57c50ddca8e5c647b9ba4";
     const MSG: &[u8] = b"ganyu-agent update payload integrity marker";
     const SIG_HEX: &str =
-        "f7fb2b375ab0c024d3b859cfabb1a092322bbda7f45695d14521d40e81bd117a5a7f456d5d86aa979df0262a67019031266bb7b335966eac3d4dcccb4d4fa103";
+        "8dc787f343b1097d73df0c67daa188a114b428a562fee4e7269fbcc24fd6effb57a6e58bacd17917e5156591240c0f9264afe80a0538b7d8ee6045f8b14dee04";
 
     #[test]
     fn script_signature_is_accepted_by_ring() {
