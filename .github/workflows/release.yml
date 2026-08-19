@@ -68,6 +68,8 @@ jobs:
         shell: bash
         env:
           GANYU_UPDATE_SIGN_KEY: ${{ secrets.GANYU_UPDATE_SIGN_KEY }}
+          # Windows 控制台默认 GBK：sign-release.py 中文输出需 UTF-8，否则 UnicodeEncodeError
+          PYTHONIOENCODING: "utf-8"
         run: |
           if [ -z "${GANYU_UPDATE_SIGN_KEY:-}" ]; then
             echo "::error::GANYU_UPDATE_SIGN_KEY 未配置——拒绝发布未签名资产。请在仓库 Secrets 中设置 Ed25519 种子(32 字节 hex)。详见 docs/update-signing.md"
