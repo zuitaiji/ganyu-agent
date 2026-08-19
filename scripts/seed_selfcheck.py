@@ -14,7 +14,7 @@ import hashlib
 import sys
 
 # ---- 生产公钥（docs/update-signing.md 官方公钥，2026-08-18 轮换） ----
-PROD_PUBKEY = "d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec"
+PROD_PUBKEY = "241db1db27d3c19c58df6a35de52a158080e310bdeb57c50ddca8e5c647b9ba4"
 
 # ---- Ed25519 参数（RFC 8032） ----
 P = 2**255 - 19

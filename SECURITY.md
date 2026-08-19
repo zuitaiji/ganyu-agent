@@ -53,7 +53,7 @@ export GANYU_MEM_KEY='<≥16字符强口令>' GANYU_RATE_PER_MIN=60 GANYU_AUDIT=
 **[docs/update-signing.md](docs/update-signing.md)**：
 
 ```
-GANYU_UPDATE_PUBKEY=d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec
+GANYU_UPDATE_PUBKEY=241db1db27d3c19c58df6a35de52a158080e310bdeb57c50ddca8e5c647b9ba4
 ```
 
 > ✅ 2026-08-18 轮换后的**生产公钥**（演示公钥 `3875bdb…` 已作废）。

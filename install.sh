@@ -25,7 +25,7 @@ CREATE_ALIAS="${GANYU_CREATE_ALIAS:-1}"
 # 官方发布公钥（ed25519 原始 32 字节 hex）。与 scripts/sign-release.py 签名端、
 # src/main.rs 的 verify_update_signature 验签端共用同一把钥匙。
 # 轮换流程见 docs/update-signing.md §3。
-GANYU_OFFICIAL_PUBKEY="${GANYU_UPDATE_PUBKEY:-d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec}"
+GANYU_OFFICIAL_PUBKEY="${GANYU_UPDATE_PUBKEY:-241db1db27d3c19c58df6a35de52a158080e310bdeb57c50ddca8e5c647b9ba4}"
 
 # ---- 简易参数解析 -------------------------------------------------------------
 while [[ $# -gt 0 ]]; do

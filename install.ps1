@@ -34,7 +34,7 @@ $NoAlias  = $env:GANYU_NOALIAS -eq "1"
 
 # 官方发布公钥（ed25519 原始 32 字节 hex）。与 scripts/sign-release.py、src/main.rs
 # 验签端共用；可用 GANYU_UPDATE_PUBKEY 覆盖。轮换见 docs/update-signing.md §3。
-$OfficialPubKey = if ($env:GANYU_UPDATE_PUBKEY) { $env:GANYU_UPDATE_PUBKEY } else { "d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec" }
+$OfficialPubKey = if ($env:GANYU_UPDATE_PUBKEY) { $env:GANYU_UPDATE_PUBKEY } else { "241db1db27d3c19c58df6a35de52a158080e310bdeb57c50ddca8e5c647b9ba4" }
 
 if (-not $Prefix) { $Prefix = Join-Path $HOME ".ganyu" }
 $binDir = Join-Path $Prefix "bin"

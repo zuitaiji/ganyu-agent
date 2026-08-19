@@ -14,18 +14,20 @@
 ## 1. 官方发布公钥（请核对后写入环境）
 
 ```
-GANYU_UPDATE_PUBKEY=d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec
+GANYU_UPDATE_PUBKEY=241db1db27d3c19c58df6a35de52a158080e310bdeb57c50ddca8e5c647b9ba4
 ```
 
-> ✅ 这是 2026-08-18 轮换后的**生产公钥**（由 `scripts/sign-release.py gen` 生成）。
-> 配套私钥种子 `GANYU_UPDATE_SIGN_KEY` **仅存在于 CI Secret**，绝不入库。
-> 早期加固阶段生成的演示公钥 `3875bdb99b8fea88084baa75335660083903775f52969ff289efbbdf0c5afbd1`
-> 已**作废**（种子曾在对话历史中明文出现，视为泄露），请勿使用。
+> ✅ 这是 2026-08-20 轮换后的**生产公钥**（由 `scripts/sign-release.py gen` 生成）。
+> 配套私钥种子 `GANYU_UPDATE_SIGN_KEY` **仅存在于 CI Secret**（2026-08-20 起同步存在于维护者本地 `~/.ganyu/UPDATE_SIGN_KEY.seed`，勿外传），绝不入库。
+> 轮换历史：
+> - `d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec`（2026-08-18 生效）→ **已作废**（2026-08-20，种子丢失，无法继续签名）
+> - `3875bdb99b8fea88084baa75335660083903775f52969ff289efbbdf0c5afbd1`（加固阶段演示公钥）→ 已**作废**（种子曾在对话历史中明文出现，视为泄露）
+> - 作废公钥的旧 release 资产（v0.1.10/v0.1.11 无 .sig）不再补签；新发布一律使用当前公钥。
 
 用户启用强校验只需：
 
 ```bash
-export GANYU_UPDATE_PUBKEY=d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec
+export GANYU_UPDATE_PUBKEY=241db1db27d3c19c58df6a35de52a158080e310bdeb57c50ddca8e5c647b9ba4
 ganyu-agent update        # 自动下载 <url>.sig 并验签；缺失/不符则拒绝更新
 ```
 
@@ -86,7 +88,7 @@ curl -LO https://github.com/<you>/ganyu-agent/releases/download/v0.1.0/ganyu-age
 curl -LO https://github.com/<you>/ganyu-agent/releases/download/v0.1.0/ganyu-agent-linux-x86_64.tar.gz.sig
 
 python scripts/sign-release.py verify ganyu-agent-linux-x86_64.tar.gz \
-  d2de2259cce226840e7acb743b89b98cf603d2781e7b1b5456855efe8bf02cec
+  241db1db27d3c19c58df6a35de52a158080e310bdeb57c50ddca8e5c647b9ba4
 # → [verify] 签名有效 ✅
 ```
 
