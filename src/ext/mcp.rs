@@ -303,6 +303,7 @@ pub async fn load_mcp_tools(reg: &ToolRegistry) -> GanyuResult<usize> {
         match McpClient::spawn(&name, &spec).await {
             Ok(mut client) => match client.list_tools().await {
                 Ok(tools) => {
+                    let n_tools = tools.len();
                     let shared = Arc::new(tokio::sync::Mutex::new(client));
                     for (tool_name, desc) in tools {
                         reg.register(Arc::new(McpTool {
@@ -310,9 +311,9 @@ pub async fn load_mcp_tools(reg: &ToolRegistry) -> GanyuResult<usize> {
                             description: desc,
                             client: shared.clone(),
                         }));
-                        count += 1;
                     }
-                    println!("[mcp] server {name}: 注册 {} 个工具", tools.len());
+                    count += n_tools;
+                    println!("[mcp] server {name}: 注册 {n_tools} 个工具");
                 }
                 Err(e) => eprintln!("[warn] MCP server {name} tools/list 失败: {e}"),
             },
