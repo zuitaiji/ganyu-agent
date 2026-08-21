@@ -306,6 +306,20 @@ async fn main() -> GanyuResult<()> {
             print_trace(&agent);
             println!("\n>> {}", out);
         }
+        "mcp" => {
+            // MCP 工具加载与列表（F13 L1）。门控：GANYU_ALLOW_MCP=1 + vetted + GANYU_MCP_ALLOW 白名单。
+            let n = ganyu_agent::ext::mcp::load_mcp_tools(&tools).await?;
+            println!("\n== MCP 工具（共 {n}）==");
+            for name in tools.names() {
+                if name.starts_with("mcp:") {
+                    if let Some(t) = tools.get_description(&name) {
+                        println!("  {name} - {t}");
+                    } else {
+                        println!("  {name}");
+                    }
+                }
+            }
+        }
         "tools" => {
             println!("== 工具 ==");
             for n in tools.names() {

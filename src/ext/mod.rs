@@ -7,6 +7,7 @@
 //! - `builtins` / `skills`：具体的内置工具与内置技能实现。
 
 pub mod builtins;
+pub mod mcp;
 pub mod nomifun_caps;
 pub mod skills;
 
