@@ -193,7 +193,8 @@ impl ToolRegistry {
                         continue;
                     }
                     let prog = command.split_whitespace().next().unwrap_or("").to_string();
-                    if !allow.is_empty() && !allow.contains(&prog) {
+                    // C2 失败闭环：白名单缺省空 = 全拒（空 allowlist 不得放行任何程序）。
+                    if allow.is_empty() || !allow.contains(&prog) {
                         continue;
                     }
                     if !is_safe_program(&prog) {
@@ -480,6 +481,64 @@ mod tests {
         assert_eq!(book.match_intent("帮我总结一下"), Some("summarize".to_string()));
         assert_eq!(book.match_intent("今天天气"), None);
         let _ = std::fs::remove_file(".ganyu_skillbook_test_mem.json");
+    }
+
+    // 改 env 的测试必须串行（全局 env + 并行竞态，历史 flaky 教训）。
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn plugin_fixture(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("ganyu_plug_{}_{}", name, std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(
+            dir.join("m.json"),
+            r#"[{"name":"x","command":"echo hi","description":"t","vetted":true}]"#,
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn plugins_default_deny_when_allowlist_empty() {
+        // P2：GANYU_PLUGIN_ALLOW 缺省空 = 全拒（C2 fail-closed），不得因空白名单放行。
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("GANYU_ALLOW_PLUGINS", "1");
+        std::env::remove_var("GANYU_PLUGIN_ALLOW");
+        let dir = plugin_fixture("deny");
+        let reg = ToolRegistry::new();
+        let n = reg.discover(&dir).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(n, 0, "白名单为空时必须全拒（缺省安全）");
+    }
+
+    #[test]
+    fn plugins_allow_when_prog_in_allowlist() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("GANYU_ALLOW_PLUGINS", "1");
+        std::env::set_var("GANYU_PLUGIN_ALLOW", "echo");
+        let dir = plugin_fixture("allow");
+        let reg = ToolRegistry::new();
+        let n = reg.discover(&dir).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(n, 1, "程序名在白名单内应注册");
+    }
+
+    #[test]
+    fn plugins_deny_unvetted_or_unlisted() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("GANYU_ALLOW_PLUGINS", "1");
+        std::env::set_var("GANYU_PLUGIN_ALLOW", "echo");
+        let dir = std::env::temp_dir().join(format!("ganyu_plug_mix_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        // 一条 vetted 但程序不在白名单（python），一条 vetted=false
+        std::fs::write(
+            dir.join("m.json"),
+            r#"[{"name":"a","command":"python x.py","vetted":true},{"name":"b","command":"echo hi","vetted":false}]"#,
+        )
+        .unwrap();
+        let reg = ToolRegistry::new();
+        let n = reg.discover(&dir).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(n, 0, "未白名单程序与未 vetted 项均不得注册");
     }
 
     #[tokio::test]
