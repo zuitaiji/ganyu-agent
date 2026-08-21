@@ -360,7 +360,7 @@ mod tests {
         let spec: McpServerSpec =
             serde_json::from_str(r#"{"command":"echo","args":["hi"],"vetted":false}"#).unwrap();
         // 白名单空 → 拒绝
-        let rejected_by_allow = allow.is_empty() || !allow.contains("ctx");
+        let rejected_by_allow = allow.is_empty() || !allow.iter().any(|s| s == "ctx");
         assert!(rejected_by_allow, "白名单空必须全拒");
         assert!(!spec.vetted, "未 vetted 必须拒绝");
         let _ = std::fs::remove_dir_all(&dir);
