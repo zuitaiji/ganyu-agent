@@ -49,6 +49,11 @@ optional = true
 version = "0.17"
 optional = true
 
+# 供应链签名端（R-1 的「签名方」）：RFC 8032 Ed25519，与 cryptography / ring 验签互通。
+[dependencies.ed25519-dalek]
+version = "2"
+optional = true
+
 # 进程级 FS 沙箱：Landlock 仅 Linux 内核可用，故作为「目标特定」可选依赖——
 # 仅在 Linux 构建时才拉取，避免在非 Linux（如 Windows/macOS）破坏编译。
 [target.'cfg(target_os = "linux")'.dependencies.landlock]
@@ -56,7 +61,7 @@ version = "0.4"
 optional = true
 
 [features]
-# 默认开启 crypto/secret：密钥零化（secret）与记忆加密（crypto）默认可用，
+# 默认开启 crypto/  secret：密钥零化（secret）与记忆加密（crypto）默认可用，
 # 避免“忘了 --features hardened 就裸奔”（F-09）。network/shell/sandbox 仍按需显式开启。
 default = ["crypto", "secret"]
 network = ["dep:reqwest", "dep:ring"]
@@ -64,6 +69,8 @@ crypto = ["dep:aes-gcm", "dep:rand", "dep:sha2"]
 secret = ["dep:zeroize"]
 # exec / shell 工具默认关闭（C1 失败闭环）；显式开启才编译进二进制。
 shell = []
+# 供应链签名 / 种子自检（R-1）：与 network 共享 ring（随机种子），ed25519-dalek 做签名。
+sign = ["dep:ring", "dep:ed25519-dalek"]
 # 进程级 FS 沙箱（Landlock，仅 Linux 生效）；默认关闭，开启后 exec 才进入沙箱。
 sandbox = ["dep:landlock"]
 # 便捷组合：生产加固全开（不含 sandbox——Landlock 仅 Linux；跨平台隔离由 C3/C4 文件沙箱兜底）。

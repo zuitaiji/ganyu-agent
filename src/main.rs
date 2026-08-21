@@ -972,6 +972,14 @@ async fn main() -> GanyuResult<()> {
             let out = wf.run(&ctx, &Value(query)).await?;
             println!("\n>> {}", out);
         }
+        "release" => {
+            // 供应链签名 / 种子自检（R-1 自有 Rust 端）。详见 src/release_sign.rs。
+            ganyu_agent::release_sign::run_release(&positional)?;
+        }
+        "tool" => {
+            // 工具层：upper / diagram / git-diff / pr-diff（Python 辅助脚本迁移为 Rust）。
+            ganyu_agent::tools::run_tool(&positional).await?;
+        }
         _ => {
             use std::io::{IsTerminal, Read, Write};
             println!("session: {session}");

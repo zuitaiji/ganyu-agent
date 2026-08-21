@@ -1,12 +1,9 @@
 {
-  "$schema": "https://json.schemastore.org/mcp.json",
-  "description": "ganyu-agent 开发期 MCP 服务器收拢。仅放开发辅助工具（GitHub/文档等）；运行期能力由 ganyu 自身工具面提供，不在此列。",
   "mcpServers": {
-    "github": {
-      "type": "stdio",
-      "command": "gh",
-      "args": ["mcp"],
-      "env": {}
+    "mock": {
+      "command": "python",
+      "args": ["tests/mock_mcp_server.py"],
+      "vetted": true
     }
   }
 }
