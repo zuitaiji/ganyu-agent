@@ -1,6 +1,6 @@
 [package]
 name = "ganyu-agent"
-version = "0.1.1"
+version = "0.1.13"
 edition = "2021"
 description = "有温度、能自进化、可拓展、可自愈的完备 agent 系统（Rust）。会话UUID + 统一字符串值 + 抽象层。"
 license = "MIT"

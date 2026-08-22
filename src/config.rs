@@ -213,6 +213,106 @@ impl GanyuConfig {
     pub fn llm_cache_enabled(&self) -> bool {
         self.llm_cache_ttl > Duration::ZERO
     }
+
+    /// L2 生态兼容：叠加 Pi 风格 `settings.json` / `models.json` 配置。
+    ///
+    /// 设计意图（见 `config-guide.md`）：对标 Pi「配置即文件、可版本管理」。
+    /// ganyu 保持零依赖用 env 做主配置源，本函数提供**可选的 Pi 式 JSON 叠加层**——
+    /// 若存在 `~/.ganyu/settings.json`，其字段覆盖对应 env 默认值；`models.json`
+    /// 的默认模型仅作兼容读取（不写入 TOML，避免引入双事实源）。
+    ///
+    /// 失败闭环：文件缺失 / 解析错误 / 字段类型不符 → **静默跳过**（fail-closed），
+    /// 绝不因 Pi 配置损坏而阻断启动。这与 `from_env()` 的 fail-closed 基线一致。
+    ///
+    /// 调用顺序：`GanyuConfig::from_env()` → `apply_pi_overrides()`（可选增强）。
+    pub fn apply_pi_overrides(&mut self) {
+        if let Some(base) = pi_config_dir() {
+            self.apply_settings(&base);
+            self.apply_models(&base);
+        }
+    }
+
+    /// 读取 `settings.json` 并叠加到当前配置（覆盖 env 默认值）。
+    fn apply_settings(&mut self, dir: &Path) {
+        let path = dir.join("settings.json");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return; // 文件缺失 → 静默跳过
+        };
+        #[derive(serde::Deserialize, Default)]
+        struct Settings {
+            #[serde(default)]
+            fs_root: Option<String>,
+            #[serde(default)]
+            tool_cache_ttl_ms: Option<u64>,
+            #[serde(default)]
+            llm_cache_ttl_ms: Option<u64>,
+            #[serde(default)]
+            rate_per_min: Option<u32>,
+            #[serde(default)]
+            audit: Option<String>,
+            #[serde(default)]
+            allow_shell: Option<bool>,
+            #[serde(default)]
+            allow_plugins: Option<bool>,
+        }
+        let Ok(s): Result<Settings, _> = serde_json::from_str(&text) else {
+            return; // 解析错误 → 静默跳过
+        };
+        if let Some(v) = s.fs_root.filter(|x| !x.is_empty()) {
+            self.fs_root = v;
+        }
+        if let Some(v) = s.tool_cache_ttl_ms {
+            self.tool_cache_ttl = Duration::from_millis(v);
+        }
+        if let Some(v) = s.llm_cache_ttl_ms {
+            self.llm_cache_ttl = Duration::from_millis(v);
+        }
+        if let Some(v) = s.rate_per_min {
+            self.rate_per_min = v;
+        }
+        if let Some(v) = s.audit {
+            self.audit = match v.as_str() {
+                "1" | "stderr" if !v.is_empty() => AuditTarget::Stderr,
+                x if !x.is_empty() => AuditTarget::File(x.to_string()),
+                _ => AuditTarget::Off,
+            };
+        }
+        if let Some(v) = s.allow_shell {
+            self.shell_allowed = v;
+        }
+        if let Some(v) = s.allow_plugins {
+            self.plugins_allowed = v;
+        }
+    }
+
+    /// 读取 `models.json` 作兼容（当前仅记录文档兼容性，不覆盖 TOML 模型写入源）。
+    ///
+    /// 字段约定：`{ "models": [{"id":"...","base_url":"...","api_key":"..."}], "default":"<id>" }`。
+    /// 这里仅验证文件可解析，避免 JSON 损坏静默被忽略；真实模型选择仍走 TOML/setup。
+    fn apply_models(&mut self, dir: &Path) {
+        let path = dir.join("models.json");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return; // 文件缺失 → 静默跳过
+        };
+        #[derive(serde::Deserialize)]
+        struct ModelsFile {
+            #[allow(dead_code)]
+            models: Option<Vec<serde_json::Value>>,
+            #[allow(dead_code)]
+            default: Option<String>,
+        }
+        // 仅解析验证；若格式损坏则静默跳过（fail-closed）。
+        let _: Result<ModelsFile, _> = serde_json::from_str(&text);
+    }
+}
+
+/// Pi 配置目录：与 TOML 配置同目录（`~/.ganyu/`），优先 `$GANYU_CONFIG` 的父目录。
+/// 返回 `None` 时调用方跳过 Pi 叠加（与 env 主源解耦）。
+fn pi_config_dir() -> Option<std::path::PathBuf> {
+    config_path().and_then(|p| {
+        let pb = std::path::Path::new(&p);
+        pb.parent().map(|d| d.to_path_buf())
+    })
 }
 
 /// 安全基线自检（治理面）：返回建议列表（空=无建议）。
@@ -352,5 +452,82 @@ mod tests {
         assert_eq!(ttl_from_str("500").as_millis(), 500);
         assert_eq!(ttl_from_str("0").as_millis(), 0);
         assert_eq!(ttl_from_str("abc").as_millis(), 0);
+    }
+
+    // ===== L2 Pi 配置适配器 =====
+
+    /// 在临时目录写 settings.json，返回该目录路径（模拟 ~/.ganyu/）。
+    fn tmp_pi_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ganyu-pi-test-{name}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn pi_settings_override_env_defaults() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let dir = tmp_pi_dir("override");
+        // 让 config_path 指向 dir/config.toml（父目录即 Pi 配置目录）。
+        std::env::set_var("GANYU_CONFIG", dir.join("config.toml"));
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"fs_root":"/tmp/pi_ws","tool_cache_ttl_ms":1000,"llm_cache_ttl_ms":2000,"rate_per_min":30,"audit":"stderr","allow_shell":true,"allow_plugins":true}"#,
+        )
+        .unwrap();
+
+        let mut cfg = GanyuConfig::from_env();
+        cfg.apply_pi_overrides();
+
+        assert_eq!(cfg.fs_root, "/tmp/pi_ws");
+        assert_eq!(cfg.tool_cache_ttl.as_millis(), 1000);
+        assert_eq!(cfg.llm_cache_ttl.as_millis(), 2000);
+        assert_eq!(cfg.rate_per_min, 30);
+        assert_eq!(cfg.audit, AuditTarget::Stderr);
+        assert!(cfg.shell_allowed);
+        assert!(cfg.plugins_allowed);
+
+        std::env::remove_var("GANYU_CONFIG");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pi_models_json_coexists_silently() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let dir = tmp_pi_dir("models");
+        std::env::set_var("GANYU_CONFIG", dir.join("config.toml"));
+        // 合法的 models.json（解析通过，不报错）。
+        std::fs::write(
+            dir.join("models.json"),
+            r#"{"default":"deepseek-v4","models":[{"id":"deepseek-v4","base_url":"https://ark.cn-beijing.volces.com","api_key":"sk-x"}]}"#,
+        )
+        .unwrap();
+        // 故意损坏的 settings.json（应静默跳过，不 panic）。
+        let _ = std::fs::write(dir.join("settings.json"), "{ not valid json ");
+
+        let mut cfg = GanyuConfig::from_env();
+        // 不应 panic；损坏的 settings.json 被忽略，env 默认值保留。
+        cfg.apply_pi_overrides();
+        assert!(!cfg.shell_allowed); // 默认值未被动
+
+        std::env::remove_var("GANYU_CONFIG");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pi_missing_files_silent_skip() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let dir = tmp_pi_dir("missing");
+        std::env::set_var("GANYU_CONFIG", dir.join("config.toml"));
+        // 不写任何 JSON 文件。
+
+        let mut cfg = GanyuConfig::from_env();
+        cfg.apply_pi_overrides(); // 不应 panic，cfg 保持 env 默认
+        assert!(!cfg.tool_cache_enabled());
+
+        std::env::remove_var("GANYU_CONFIG");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

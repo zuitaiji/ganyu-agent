@@ -199,7 +199,10 @@ async fn main() -> GanyuResult<()> {
     let memory: DynMemory = Arc::new(LocalMemory::new(default_memory_path()));
 
     // 工程化配置面：集中读取 GANYU_*，据此启用缓存/限速/审计。
-    let cfg = ganyu_agent::config::GanyuConfig::from_env();
+    let mut cfg = ganyu_agent::config::GanyuConfig::from_env();
+    // L2 生态兼容：叠加 Pi 风格 settings.json/models.json（若存在且可解析）。
+    // fail-closed：文件缺失/损坏静默跳过，不影响既有 env/TOML 主配置源。
+    cfg.apply_pi_overrides();
     // 配置自愈：~/.ganyu/config.toml 缺失时自动生成模板（目录被清理后不再静默失联）。
     if let Some(p) = ganyu_agent::config::ensure_config_template() {
         eprintln!("[ganyu] 未找到配置文件，已自动生成模板：{p}");
