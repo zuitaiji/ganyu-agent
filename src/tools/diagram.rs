@@ -29,7 +29,7 @@ fn box_node(
     for (i, ln) in lines.iter().enumerate() {
         let dy = y + h / 2.0 + (i as f64 - (n as f64 - 1.0) / 2.0) * (fs + 4.0) + fs / 3.0;
         t.push_str(&format!(
-            "<text x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"middle\" fill=\"#1A2740\" style=\"{}\font-family:Segoe UI,Microsoft YaHei,sans-serif\">{}</text>",
+            "<text x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"middle\" fill=\"#1A2740\" style=\"font-weight:{};font-family:Segoe UI,Microsoft YaHei,sans-serif\">{}</text>",
             x + w / 2.0,
             dy,
             fs,

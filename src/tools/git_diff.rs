@@ -343,8 +343,14 @@ fn repo_from_remote() -> GanyuResult<(String, String)> {
         .map_err(|e| GanyuError::Regex(e))?;
     if let Some(c) = re.captures(out) {
         return Ok((
-            c.get(1)?.as_str().to_string(),
-            c.get(2)?.as_str().to_string(),
+            c.get(1)
+                .ok_or_else(|| GanyuError::Forbidden("无法解析仓库 owner".into()))?
+                .as_str()
+                .to_string(),
+            c.get(2)
+                .ok_or_else(|| GanyuError::Forbidden("无法解析仓库名".into()))?
+                .as_str()
+                .to_string(),
         ));
     }
     Err(GanyuError::Forbidden(

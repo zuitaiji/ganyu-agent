@@ -14,7 +14,6 @@
 //! 或 `--key` 读取，绝不落盘/打印非必要位置。
 
 use crate::error::{GanyuError, GanyuResult};
-use std::io::Write;
 
 /// 生产公钥（公开值，来自 docs/update-sign 轮换，2026-08-18）。等价 seed_selfcheck.py 的 PROD_PUBKEY。
 const PROD_PUBKEY: &str = "241db1db27d3c19c58df6a35de52a158080e310bdeb57c50ddca8e5c647b9ba4";
