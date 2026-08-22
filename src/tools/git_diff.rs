@@ -3,7 +3,7 @@
 //! - `pr-diff` 远程：等价于 `code-review-assistant/scripts/get_pr_diff.py`（GitHub/GitLab，token 取自参数或环境变量）。
 //! 远程部分依赖 reqwest，仅在 `network` 特性下启用（与 Rust 凭据基件一致）。
 
-use ganyu_agent::error::GanyuResult;
+use crate::error::GanyuResult;
 
 fn run_git(args: &[&str], cwd: &str) -> GanyuResult<String> {
     let output = std::process::Command::new("git")
@@ -12,14 +12,14 @@ fn run_git(args: &[&str], cwd: &str) -> GanyuResult<String> {
         .output()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                ganyu_agent::error::GanyuError::Forbidden("未找到 git 命令，请确认已安装 Git".into())
+                crate::error::GanyuError::Forbidden("未找到 git 命令，请确认已安装 Git".into())
             } else {
-                ganyu_agent::error::GanyuError::Io(e)
+                crate::error::GanyuError::Io(e)
             }
         })?;
     if !output.status.success() {
         let msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(ganyu_agent::error::GanyuError::Forbidden(format!(
+        return Err(crate::error::GanyuError::Forbidden(format!(
             "git {} 失败: {}",
             args.join(" "),
             msg
@@ -81,7 +81,7 @@ pub fn run_local(args: &[String]) -> GanyuResult<()> {
                 return Ok(());
             }
             other => {
-                return Err(ganyu_agent::error::GanyuError::Forbidden(format!(
+                return Err(crate::error::GanyuError::Forbidden(format!(
                     "未知参数：{other}"
                 )))
             }
@@ -143,7 +143,7 @@ pub fn run_local(args: &[String]) -> GanyuResult<()> {
 
 #[cfg(feature = "network")]
 pub async fn run_remote(args: &[String]) -> GanyuResult<()> {
-    use ganyu_agent::error::GanyuError;
+    use crate::error::GanyuError;
 
     let mut provider: Option<String> = None;
     let mut pr: Option<String> = None;
@@ -253,7 +253,7 @@ async fn get_github_diff(
     pr: &str,
     token: Option<&str>,
 ) -> GanyuResult<String> {
-    use ganyu_agent::error::GanyuError;
+    use crate::error::GanyuError;
     let url = format!("https://api.github.com/repos/{owner}/{repo}/pulls/{pr}");
     let mut req = client.get(&url).header("Accept", "application/vnd.github.v3.diff");
     if let Some(t) = token {
@@ -280,7 +280,7 @@ async fn get_gitlab_diff(
     mr: &str,
     token: Option<&str>,
 ) -> GanyuResult<String> {
-    use ganyu_agent::error::GanyuError;
+    use crate::error::GanyuError;
     let proj_encoded: String = project.replace('/', "%2F");
     let url = format!("{base_url}/api/v4/projects/{proj_encoded}/merge_requests/{mr}/diffs");
     let mut req = client.get(&url);
@@ -335,7 +335,7 @@ fn parse_gitlab_url(u: &str) -> Option<(String, String, String)> {
 
 #[cfg(feature = "network")]
 fn repo_from_remote() -> GanyuResult<(String, String)> {
-    use ganyu_agent::error::GanyuError;
+    use crate::error::GanyuError;
     let out = run_git(&["remote", "get-url", "origin"], ".").unwrap_or_default();
     let out = out.trim();
     // git@github.com:owner/repo.git 或 https://github.com/owner/repo.git
@@ -354,7 +354,7 @@ fn repo_from_remote() -> GanyuResult<(String, String)> {
 
 #[cfg(not(feature = "network"))]
 pub async fn run_remote(_args: &[String]) -> GanyuResult<()> {
-    Err(ganyu_agent::error::GanyuError::Forbidden(
+    Err(crate::error::GanyuError::Forbidden(
         "pr-diff 需要 network 特性，请用 --features network/hardened 编译。".into(),
     ))
 }

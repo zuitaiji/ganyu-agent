@@ -2,7 +2,7 @@
 //! 等价替换 `docs/ai-arch/diagrams/gen_diagrams.py`：输出 role_interaction.svg 与
 //! upload_repo_init_lane.svg。默认写到当前目录，第一个参数为输出目录。
 
-use ganyu_agent::error::GanyuResult;
+use crate::error::GanyuResult;
 
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -29,7 +29,7 @@ fn box_node(
     for (i, ln) in lines.iter().enumerate() {
         let dy = y + h / 2.0 + (i as f64 - (n as f64 - 1.0) / 2.0) * (fs + 4.0) + fs / 3.0;
         t.push_str(&format!(
-            "<text x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"middle\" fill=\"#1A2740\" style=\"{font}font-family:Segoe UI,Microsoft YaHei,sans-serif\">{}</text>",
+            "<text x=\"{}\" y=\"{}\" font-size=\"{}\" text-anchor=\"middle\" fill=\"#1A2740\" style=\"{}\font-family:Segoe UI,Microsoft YaHei,sans-serif\">{}</text>",
             x + w / 2.0,
             dy,
             fs,
@@ -46,7 +46,7 @@ fn box_node(
 fn edge(
     x1: f64,
     y1: f64,
-    x2: f64, 
+    x2: f64,
     y2: f64,
     label: &str,
     color: &str,
@@ -77,10 +77,10 @@ const HEAD: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" heig
 const TAIL: &str = "</svg>";
 
 fn gen_role_interaction(out_dir: &str) -> GanyuResult<()> {
-    let w = 820.0;
-    let h = 580.0;
+    let w: usize = 820;
+    let h: usize = 580;
     let mut s: Vec<String> = Vec::new();
-    s.push(HEAD.replace("{w}", "820").replace("{h}", "580"));
+    s.push(HEAD.replace("{w}", &w.to_string()).replace("{h}", &h.to_string()));
 
     let cx = 300.0;
     let cy = 250.0;
@@ -127,16 +127,16 @@ fn gen_role_interaction(out_dir: &str) -> GanyuResult<()> {
     s.push(TAIL.to_string());
 
     let p = format!("{}/role_interaction.svg", out_dir);
-    std::fs::write(&p, s.join("\n")).map_err(|e| ganyu_agent::error::GanyuError::Io(e))?;
+    std::fs::write(&p, s.join("\n")).map_err(|e| crate::error::GanyuError::Io(e))?;
     println!("written {p}");
     Ok(())
 }
 
 fn gen_upload_repo_lane(out_dir: &str) -> GanyuResult<()> {
-    let w = 880.0;
-    let h = 600.0;
+    let w: usize = 880;
+    let h: usize = 600;
     let mut s: Vec<String> = Vec::new();
-    s.push(HEAD.replace("{w}", "880").replace("{h}", "600"));
+    s.push(HEAD.replace("{w}", &w.to_string()).replace("{h}", &h.to_string()));
 
     let lanes: [(f64, &str); 4] = [
         (0.0, "终端开发者"),
@@ -174,8 +174,8 @@ fn gen_upload_repo_lane(out_dir: &str) -> GanyuResult<()> {
     s.push(step(288.0, 690.0, "已初始化仓库落盘", "#E6F4E6", "#2E7D32", 11.0));
     s.push(step(0.0, 690.0, "收到一致结果 / 审计日志 NDJSON", "#DDEBFF", "#3B5B92", 11.0));
 
-    s.push(box_node(210.0, 396.0, 470.0, 40.0, "失败 -> 补偿回滚 (Failed) -> 开发者收到明确错误", "#FBD9D9", "#B23B3B", 11.0));
-    s.push(box_node( 210.0, 546.0, 470.0, 40.0, "重复执行 -> 幂等键命中 -> 直接返回 Succeeded（结果一致）", "#DDEBFF", "#3B5B92", 11.0));
+    s.push(box_node(210.0, 396.0, 470.0, 40.0, "失败 -> 补偿回滚 (Failed) -> 开发者收到明确错误", "#FBD9D9", "#B23B3B", 11.0, false));
+    s.push(box_node(210.0, 546.0, 470.0, 40.0, "重复执行 -> 幂等键命中 -> 直接返回 Succeeded（结果一致）", "#DDEBFF", "#3B5B92", 11.0, false));
 
     s.push(edge(315.0, 0.0 + 48.0, 315.0, 96.0 + 22.0, "启动", "#6B7A99", false));
     s.push(edge(315.0, 96.0 + 74.0, 315.0, 192.0 + 22.0, "委派安全校验", "#6B7A99", false));
@@ -189,7 +189,7 @@ fn gen_upload_repo_lane(out_dir: &str) -> GanyuResult<()> {
     s.push(TAIL.to_string());
 
     let p = format!("{}/upload_repo_init_lane.svg", out_dir);
-    std::fs::write(&p, s.join("\n")).map_err(|e| ganyu_agent::error::GanyuError::Io(e))?;
+    std::fs::write(&p, s.join("\n")).map_err(|e| crate::error::GanyuError::Io(e))?;
     println!("written {p}");
     Ok(())
 }
@@ -207,7 +207,7 @@ pub fn run(_args: &[String]) -> GanyuResult<()> {
     } else {
         ".".to_string()
     };
-    std::fs::create_dir_all(&out_dir).map_err(|e| ganyu_agent::error::GanyuError::Io(e))?;
+    std::fs::create_dir_all(&out_dir).map_err(|e| crate::error::GanyuError::Io(e))?;
     gen_role_interaction(&out_dir)?;
     gen_upload_repo_lane(&out_dir)?;
     Ok(())

@@ -13,7 +13,8 @@
 //! 安全约束：缺失密钥时非零退出（fail-closed）；私钥仅从 `GANYU_UPDATE_SIGN_KEY`
 //! 或 `--key` 读取，绝不落盘/打印非必要位置。
 
-use ganyu_agent::error::{GanyuError, GanyuResult};
+use crate::error::{GanyuError, GanyuResult};
+use std::io::Write;
 
 /// 生产公钥（公开值，来自 docs/update-sign 轮换，2026-08-18）。等价 seed_selfcheck.py 的 PROD_PUBKEY。
 const PROD_PUBKEY: &str = "241db1db27d3c19c58df6a35de52a158080e310bdeb57c50ddca8e5c647b9ba4";
@@ -70,7 +71,7 @@ fn load_seed(arg_key: Option<  &str>) -> GanyuResult<[u8; 32]> {
 
 /// hex 解码（复用 security::decode_hex，避免重复实现）。
 pub fn decode_hex(s: &str) -> Option<Vec<u8>> {
-    ganyu_agent::security::decode_hex(s)
+    crate::security::decode_hex(s)
 }
 
 #[cfg(feature = "sign")]
@@ -91,7 +92,8 @@ fn keypair_gen() -> GanyuResult<()> {
     let sk = SigningKey::from_bytes(&seed);
     let pubkey = sk.verifying_key().to_bytes();
     let mut out = std::io::stdout();
-    out.write_all(b"# --- 密钥对（仅生成一次，seed 仅存 CI secret）---\n").ok();
+    out.write_all("# --- 密钥对（仅生成一次，seed 仅存 CI secret）---\n".as_bytes())
+        .ok();
     writeln!(out, "GANYU_UPDATE_SIGN_KEY={}   # 机密：仅存 CI secret，勿提交", hex(&seed)).ok();
     writeln!(out, "GANYU_UPDATE_PUBKEY ={}    # 公开：写入文档与用户环境", hex(&pubkey)).ok();
     Ok(())

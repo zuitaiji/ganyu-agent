@@ -5,7 +5,7 @@ pub mod diagram;
 pub mod git_diff;
 pub mod upper;
 
-use ganyu_agent::error::GanyuResult;
+use crate::error::GanyuResult;
 
 /// 入口：处理 `ganyu tool <subcommand> ...`。
 pub async fn run_tool(args: &[String]) -> GanyuResult<()> {
@@ -16,7 +16,7 @@ pub async fn run_tool(args: &[String]) -> GanyuResult<()> {
         "diagram" => diagram::run(rest),
         "git-diff" => git_diff::run_local(rest),
         "pr-diff" => git_diff::run_remote(rest).await,
-        other => Err(ganyu_agent::error::GanyuError::Forbidden(format!(
+        other => Err(crate::error::GanyuError::Forbidden(format!(
             "未知 tool 子命令：{other}（可用 upper/diagram/git-diff/pr-diff）"
         ))),
     }

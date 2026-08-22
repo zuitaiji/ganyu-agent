@@ -19,3 +19,12 @@ _k*.txt
 # 轮询诊断日志
 polled.log
 *.polled.log
+
+# 本地编译/构建残留（cargo 离线编译尝试、CI 调试副本等）
+build*/
+build_*/
+build_ci/
+build_bg/
+build_final/
+*.log
+rebuild.log

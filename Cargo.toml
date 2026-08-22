@@ -6,7 +6,7 @@ description = "有温度、能自进化、可拓展、可自愈的完备 agent �
 license = "MIT"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "sync", "process"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "sync", "process", "io-util"] }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
