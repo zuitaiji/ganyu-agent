@@ -431,6 +431,15 @@ async fn main() -> GanyuResult<()> {
                 tools.names().len(),
                 skills.skill_names().len()
             );
+            // 能力边界矩阵：声明式映射（基于已知 #[cfg(feature)] 注册点），
+            // 让用户一眼看清「关掉某特性会少哪些能力」。fail-closed：未启用的特性对应能力标 ❌。
+            println!("\n== 能力边界矩阵 ==");
+            println!("  {:<22} {:<14} {}", "能力", "所需特性", "状态");
+            println!("  {:<22} {:<14} {}", "----", "--------", "----");
+            for row in capability_matrix() {
+                let status = if row.enabled { "✅ 启用" } else { "❌ 禁用" };
+                println!("  {:<22} {:<14} {}", row.name, row.feature, status);
+            }
             let mem_path = default_memory_path();
             let mem_ok = mem_path.exists();
             println!(
@@ -983,6 +992,27 @@ async fn main() -> GanyuResult<()> {
             // 工具层：upper / diagram / git-diff / pr-diff（Python 辅助脚本迁移为 Rust）。
             ganyu_agent::tools::run_tool(&positional).await?;
         }
+        "capabilities" => {
+            // 能力边界探测：JSON 导出完整能力清单（名称/模块/所需特性/启用状态/来源）。
+            // 供程序化探测边界——解决「能力无法探测边界」痛点。
+            let rows = capability_matrix();
+            let json: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "name": r.name,
+                        "module": r.module,
+                        "feature": r.feature,
+                        "enabled": r.enabled,
+                        "source": r.source,
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json).unwrap_or_else(|_| "[]".to_string())
+            );
+        }
         _ => {
             use std::io::{IsTerminal, Read, Write};
             println!("session: {session}");
@@ -1128,6 +1158,48 @@ fn build_workflow(
         }
     };
     Ok(wf)
+}
+
+/// 能力边界矩阵：声明式映射（基于已知 `#[cfg(feature)]` 注册点）。
+///
+/// 解决痛点「能力无法探测边界」：列出全部能力 → 所属模块 → 所需编译特性 →
+/// 当前是否启用。fail-closed：未启用特性的能力标 `enabled=false`，不臆测。
+///
+/// 数据来源：手工维护的静态表（与 `ext/builtins.rs` / `tools/git_diff.rs` / `core/memory.rs`
+/// 中的 `#[cfg(feature)]` 注册点一一对应）。新增特性门控能力时，同步在此追加一行。
+struct CapabilityRow {
+    name: &'static str,
+    module: &'static str,
+    feature: &'static str,
+    enabled: bool,
+    source: &'static str,
+}
+
+fn capability_matrix() -> Vec<CapabilityRow> {
+    vec![
+        // 始终启用（默认特性）
+        CapabilityRow { name: "memory_read/write", module: "core/memory", feature: "always", enabled: true, source: "builtin" },
+        CapabilityRow { name: "skill:* (特性技能)", module: "ext/skills", feature: "always", enabled: true, source: "skill" },
+        CapabilityRow { name: "nomifun:* (桥接)", module: "ext/nomifun_caps", feature: "always", enabled: true, source: "skill" },
+        CapabilityRow { name: "tool:upper/diagram/git_diff(pr)", module: "tools/", feature: "always", enabled: true, source: "builtin" },
+        // shell 特性
+        CapabilityRow { name: "shell_exec", module: "ext/builtins", feature: "shell", enabled: cfg!(feature = "shell"), source: "builtin" },
+        // network 特性
+        CapabilityRow { name: "web_fetch", module: "ext/builtins", feature: "network", enabled: cfg!(feature = "network"), source: "builtin" },
+        CapabilityRow { name: "http_call", module: "ext/builtins", feature: "network", enabled: cfg!(feature = "network"), source: "builtin" },
+        CapabilityRow { name: "git remote diff", module: "tools/git_diff", feature: "network", enabled: cfg!(feature = "network"), source: "builtin" },
+        CapabilityRow { name: "openai backend", module: "core/llm", feature: "network", enabled: cfg!(feature = "network"), source: "builtin" },
+        // crypto + secret 特性
+        CapabilityRow { name: "memory encrypt (H1)", module: "core/memory", feature: "crypto+secret", enabled: cfg!(feature = "crypto") && cfg!(feature = "secret"), source: "builtin" },
+        CapabilityRow { name: "key erase (L1)", module: "core/memory", feature: "crypto+secret", enabled: cfg!(feature = "crypto") && cfg!(feature = "secret"), source: "builtin" },
+        // sign 特性
+        CapabilityRow { name: "release sign (R-1)", module: "release_sign", feature: "sign", enabled: cfg!(feature = "sign"), source: "builtin" },
+        // sandbox 特性
+        CapabilityRow { name: "landlock sandbox", module: "sandbox", feature: "sandbox", enabled: cfg!(feature = "sandbox"), source: "builtin" },
+        // 运行时门控（非编译特性，取决于 env）
+        CapabilityRow { name: "mcp:* (MCP 客户端)", module: "ext/mcp", feature: "runtime: GANYU_ALLOW_MCP", enabled: std::env::var("GANYU_ALLOW_MCP").as_deref() == Ok("1"), source: "mcp" },
+        CapabilityRow { name: "plugin:* (插件发现)", module: "ext/mod", feature: "runtime: GANYU_ALLOW_PLUGINS", enabled: std::env::var("GANYU_ALLOW_PLUGINS").as_deref() == Ok("1"), source: "plugin" },
+    ]
 }
 
 async fn selftest() {
