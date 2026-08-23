@@ -1,6 +1,18 @@
-# ganyu-agent 构建优化（构建缓存方案 B）
-[build]
-incremental = true
+# 项目级构建缓存配置 —— sccache 对象级编译缓存
+#
+# 作用：本地重复构建（尤其多 target-dir / CI 同源）复用编译产物，显著缩短编译时间。
+# 注意：仅项目级生效，不污染用户全局 ~/.cargo/config.toml。
 
-# 并行度：按机器核数调整（4/8/16）
-jobs = 8
+[build]
+rustc-wrapper = "sccache"
+
+[env]
+# 关键：关闭增量编译，sccache 才能接管对象级缓存。
+# 若未设此值，cargo 默认 incremental=true 会让 sccache 判定 non-cacheable（坑 1）。
+CARGO_INCREMENTAL = "0"
+# sccache 本地磁盘缓存上限，避免缓存无限增长占用空间。
+SCCACHE_CACHE_SIZE = "10G"
+
+# 说明：CI 仍走 Swatinem/rust-cache（按 CARGO_TARGET_DIR 缓存），与本项目级
+# sccache（按编译对象缓存）互补、互不冲突。如需 CI 也走 sccache，可在 CI 安装 sccache
+# 并复用本配置（cargo 会自动读取项目级 config.toml）。

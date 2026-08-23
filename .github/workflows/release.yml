@@ -30,6 +30,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # 项目级 .cargo/config.toml 启用了 rustc-wrapper=sccache，CI runner 需先安装 sccache，
+      # 否则 cargo build 会因找不到 wrapper 而失败。与 Swatinem/rust-cache（CARGO_TARGET_DIR 级）
+      # 互补：sccache 做编译对象级缓存，rust-cache 做目录级缓存，互不冲突。
+      - name: Install sccache
+        run: cargo install sccache --locked
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
