@@ -379,7 +379,7 @@ dependencies = [
 
 [[package]]
 name = "ganyu-agent"
-version = "0.1.1"
+version = "0.1.14"
 dependencies = [
  "aes-gcm",
  "async-trait",
