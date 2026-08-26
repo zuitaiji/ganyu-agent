@@ -58,6 +58,10 @@ pub enum GanyuError {
 
     #[error("workflow: {0}")]
     Workflow(String),
+
+    /// 非法输入（参数/配置解析失败，如 chat_id、绑定地址格式错误）。
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
 }
 
 pub type GanyuResult<T> = Result<T, GanyuError>;

@@ -851,109 +851,33 @@ async fn main() -> GanyuResult<()> {
                 "start" => {
                     #[cfg(feature = "network")]
                     {
-                        let token = ganyu_agent::config::read_gateway_token();
-                        let Some(token) = token else {
-                            eprintln!("未配置 Telegram token。先运行: ganyu gateway setup <bot_token>");
-                            std::process::exit(1);
+                        use ganyu_agent::gateway::{build_adapters, run_adapter, GatewayDeps};
+                        // 装配各平台适配器（Telegram / HTTP 桥接），fail-closed：无配置则不启用。
+                        let deps = GatewayDeps {
+                            gateway: agent.gateway.clone(),
+                            memory: memory.clone(),
+                            tools: tools.clone(),
+                            skills: skills.clone(),
+                            reasoner: agent.reasoner.clone(),
                         };
-                        let api = format!("https://api.telegram.org/bot{token}");
-                        let client = reqwest::Client::builder()
-                            .user_agent("ganyu-gateway")
-                            .build()
-                            .map_err(|e| GanyuError::Http(e.to_string()))?;
-                        // 校验 token
-                        let me: serde_json::Value = client
-                            .get(format!("{api}/getMe"))
-                            .send().await
-                            .map_err(|e| GanyuError::Http(e.to_string()))?
-                            .error_for_status()
-                            .map_err(|e| GanyuError::Http(e.to_string()))?
-                            .json().await
-                            .map_err(|e| GanyuError::Http(e.to_string()))?;
-                        if me["ok"].as_bool() != Some(true) {
-                            eprintln!("getMe 失败（token 无效？）: {me}");
+                        let adapters = build_adapters(&cfg).await;
+                        if adapters.is_empty() {
+                            eprintln!("未配置任何网关平台。先运行: ganyu gateway setup <bot_token> 或设 GANYU_HTTP_BIND=127.0.0.1:8080");
                             std::process::exit(1);
                         }
-                        let bot_name = me["result"]["username"].as_str().unwrap_or("bot");
-                        println!("✅ Telegram 网关已启动（@{bot_name}）。Ctrl+C 退出。");
-
-                        // 会话隔离：每个 chat_id 一个独立 Agent/session（懒创建缓存），
-                        // 避免多用户消息串同一上下文。重启网关后为新 session（会话不跨重启）。
-                        let mut chat_agents: HashMap<i64, Arc<Agent>> = HashMap::new();
-                        let mut offset: i64 = 0;
-                        loop {
-                            // 长轮询：timeout=25s 保持连接，减少无效请求
-                            let updates: serde_json::Value = match client
-                                .get(format!("{api}/getUpdates"))
-                                .query(&[
-                                    ("offset", offset.to_string()),
-                                    ("timeout", "25".to_string()),
-                                    ("allowed_updates", r#"["message"]"#.to_string()),
-                                ])
-                                .send().await
-                                .map_err(|e| GanyuError::Http(e.to_string()))?
-                                .error_for_status()
-                                .map_err(|e| GanyuError::Http(e.to_string()))?
-                                .json().await
-                            {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    eprintln!("[gateway] getUpdates 错误: {e}，3 秒后重试");
-                                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                                    continue;
-                                }
-                            };
-                            if updates["ok"].as_bool() != Some(true) {
-                                eprintln!("[gateway] getUpdates 返回错误: {updates}");
-                                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                                continue;
-                            }
-                            let Some(arr) = updates["result"].as_array() else { continue };
-                            for upd in arr {
-                                if let Some(n) = upd["update_id"].as_i64() {
-                                    offset = n + 1;
-                                }
-                                let Some(text) = upd["message"]["text"].as_str() else { continue };
-                                let chat_id = upd["message"]["chat"]["id"].as_i64();
-                                let Some(chat_id) = chat_id else { continue };
-                                let from = upd["message"]["from"]["username"].as_str().unwrap_or("user");
-                                let text = text.trim().to_string();
-                                if text.is_empty() { continue; }
-                                println!("[gateway] @{from}: {text}");
-                                // 按 chat_id 隔离会话；首次创建独立 Agent（共享工具/记忆/网关）
-                                let chat_agent = chat_agents.entry(chat_id).or_insert_with(|| {
-                                    let sid = SessionId::new();
-                                    println!("[gateway] 新会话 chat={chat_id} session={sid}");
-                                    Arc::new(Agent::new(
-                                        agent.gateway.clone(),
-                                        memory.clone(),
-                                        tools.clone(),
-                                        skills.clone(),
-                                        agent.reasoner.clone(),
-                                        sid,
-                                    ))
-                                });
-                                // 用该会话的 agent 推理
-                                let out = match chat_agent.run(&Value(text.clone())).await {
-                                    Ok(v) => v.to_string(),
-                                    Err(e) => format!("抱歉，处理出错: {e}"),
-                                };
-                                println!("[gateway] ganyu: {out}");
-                                // 回复（截断过长消息，Telegram 限制 4096）
-                                let reply: String = out.chars().take(4000).collect();
-                                let _ = client
-                                    .post(format!("{api}/sendMessage"))
-                                    .json(&serde_json::json!({
-                                        "chat_id": chat_id,
-                                        "text": reply,
-                                    }))
-                                    .send().await;
-                            }
+                        // 每适配器独立任务并发运行（Telegram 长轮询 / HTTP 桥接挂起队列）。
+                        let mut handles = Vec::new();
+                        for adapter in adapters {
+                            handles.push(tokio::spawn(run_adapter(adapter, deps.clone())));
+                        }
+                        println!("[gateway] 已启动 {} 个平台适配器，Ctrl+C 退出。", handles.len());
+                        for h in handles {
+                            let _ = h.await;
                         }
                     }
                     #[cfg(not(feature = "network"))]
                     {
-                        eprintln!("当前构建无 network 特性，无法接 Telegram。请用 --features network/hardened 编译。");
+                        eprintln!("当前构建无 network 特性，无法启动网关。请用 --features network/hardened 编译。");
                         std::process::exit(1);
                     }
                 }
@@ -1199,6 +1123,9 @@ fn capability_matrix() -> Vec<CapabilityRow> {
         // 运行时门控（非编译特性，取决于 env）
         CapabilityRow { name: "mcp:* (MCP 客户端)", module: "ext/mcp", feature: "runtime: GANYU_ALLOW_MCP", enabled: std::env::var("GANYU_ALLOW_MCP").as_deref() == Ok("1"), source: "mcp" },
         CapabilityRow { name: "plugin:* (插件发现)", module: "ext/mod", feature: "runtime: GANYU_ALLOW_PLUGINS", enabled: std::env::var("GANYU_ALLOW_PLUGINS").as_deref() == Ok("1"), source: "plugin" },
+        // 多平台网关（network 特性 + 运行时配置；L3 生态兼容）
+        CapabilityRow { name: "gateway:telegram", module: "gateway/telegram", feature: "network + [gateway] telegram_token", enabled: cfg!(feature = "network") && ganyu_agent::config::read_gateway_token().is_some(), source: "adapter" },
+        CapabilityRow { name: "gateway:http (Webhook 桥接)", module: "gateway/http_bridge", feature: "network + GANYU_HTTP_BIND", enabled: cfg!(feature = "network") && ganyu_agent::config::read_gateway_http_bind().is_some(), source: "adapter" },
     ]
 }
 

@@ -1,12 +1,12 @@
 [package]
 name = "ganyu-agent"
-version = "0.1.15"
+version = "0.1.16"
 edition = "2021"
 description = "有温度、能自进化、可拓展、可自愈的完备 agent 系统（Rust）。会话UUID + 统一字符串值 + 抽象层。"
 license = "MIT"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "sync", "process", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "sync", "process", "io-util", "net"] }
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -25,6 +25,12 @@ version = "0.12"
 optional = true
 default-features = false
 features = ["json", "rustls-tls", "system-proxy"]
+
+# 多平台网关的 HTTP Webhook 桥接（L3）：axum 起本地端点，供 OpenClaw/任意平台转发。
+# 仅 network 特性下编译进二进制，默认构建不拉入。
+[dependencies.axum]
+version = "0.7"
+optional = true
 
 # 记忆加密（H1）/ 密钥擦除（L1）—— 默认关闭，生产用 --features crypto,secret
 [dependencies.aes-gcm]
@@ -64,7 +70,7 @@ optional = true
 # 默认开启 crypto/  secret：密钥零化（secret）与记忆加密（crypto）默认可用，
 # 避免“忘了 --features hardened 就裸奔”（F-09）。network/shell/sandbox 仍按需显式开启。
 default = ["crypto", "secret"]
-network = ["dep:reqwest", "dep:ring"]
+network = ["dep:reqwest", "dep:ring", "dep:axum"]
 crypto = ["dep:aes-gcm", "dep:rand", "dep:sha2"]
 secret = ["dep:zeroize"]
 # exec / shell 工具默认关闭（C1 失败闭环）；显式开启才编译进二进制。

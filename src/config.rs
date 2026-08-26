@@ -92,6 +92,24 @@ pub fn read_gateway_token() -> Option<String> {
     parsed.gateway?.telegram_token
 }
 
+/// 读取 [gateway] 段的 HTTP 桥接绑定地址（`ganyu gateway start` 用）。
+/// 返回 `Some(addr)` 时启用 HTTP 桥接适配器（OpenClaw/任意平台经 HTTP 转发到 ganyu）。
+pub fn read_gateway_http_bind() -> Option<String> {
+    let path = config_path()?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    #[derive(serde::Deserialize)]
+    struct FileCfg {
+        #[serde(default)]
+        gateway: Option<GatewayCfg>,
+    }
+    #[derive(serde::Deserialize)]
+    struct GatewayCfg {
+        http_bind: Option<String>,
+    }
+    let parsed = toml::from_str::<FileCfg>(&text).ok()?;
+    parsed.gateway?.http_bind.filter(|s| !s.trim().is_empty())
+}
+
 /// 写入 [gateway] 段（`ganyu gateway setup` 用）。保留其他段。
 pub fn write_gateway_token(token: &str) -> crate::GanyuResult<()> {
     let path = config_path().ok_or_else(|| {
@@ -134,6 +152,7 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
     ("OPENAI_API_BASE / OPENAI_API_KEY", "OpenAI 兼容后端（network 特性下生效）"),
     ("OPENAI_MODEL", "模型 id（默认 gpt-4o-mini；推理模型自动兼容 reasoning_content）"),
     ("GANYU_CONFIG", "配置文件路径（默认 ~/.ganyu/config.toml）"),
+    ("GANYU_HTTP_BIND", "多平台网关 HTTP 桥接绑定地址（如 127.0.0.1:8080）；network 特性下启用"),
 ];
 
 /// 配置自愈：配置文件不存在时自动生成可编辑模板（**不含密钥**）。
@@ -173,6 +192,8 @@ pub struct GanyuConfig {
     pub audit: AuditTarget,
     pub shell_allowed: bool,
     pub plugins_allowed: bool,
+    /// 多平台网关 HTTP 桥接绑定地址（如 127.0.0.1:8080）。`Some` 时启用 HTTP 桥接适配器。
+    pub http_bind: Option<String>,
 }
 
 /// 审计目标：关闭 / stderr / 文件。
@@ -201,6 +222,10 @@ impl GanyuConfig {
             },
             shell_allowed: std::env::var("GANYU_ALLOW_SHELL").as_deref() == Ok("1"),
             plugins_allowed: std::env::var("GANYU_ALLOW_PLUGINS").as_deref() == Ok("1"),
+            http_bind: std::env::var("GANYU_HTTP_BIND")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .or_else(read_gateway_http_bind),
         }
     }
 
@@ -254,6 +279,8 @@ impl GanyuConfig {
             allow_shell: Option<bool>,
             #[serde(default)]
             allow_plugins: Option<bool>,
+            #[serde(default)]
+            http_bind: Option<String>,
         }
         let Ok(s): Result<Settings, _> = serde_json::from_str(&text) else {
             return; // 解析错误 → 静默跳过
@@ -282,6 +309,9 @@ impl GanyuConfig {
         }
         if let Some(v) = s.allow_plugins {
             self.plugins_allowed = v;
+        }
+        if let Some(v) = s.http_bind.filter(|x| !x.trim().is_empty()) {
+            self.http_bind = Some(v);
         }
     }
 

@@ -11,6 +11,7 @@ pub mod config;
 pub mod core;
 pub mod error;
 pub mod ext;
+pub mod gateway;
 pub mod heal;
 pub mod knowledge;
 pub mod observe;
