@@ -11,15 +11,15 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::core::Agent;
 use crate::core::loop_::Reasoner;
 use crate::core::memory::DynMemory;
+use crate::core::Agent;
 use crate::ext::SkillBook;
 use crate::ext::ToolRegistry;
 use crate::routing::Gateway;
 use crate::session::SessionId;
-use crate::Value;
 use crate::GanyuResult;
+use crate::Value;
 
 /// 入站消息（平台无关）。
 pub struct InboundMessage {
@@ -57,15 +57,20 @@ pub struct GatewayDeps {
 ///
 /// 会话隔离：相同 `chat_id` 复用同一 `Agent`/session；不同 chat 互不串上下文。
 /// 任一 adapter 内部为长循环（Telegram 长轮询 / HTTP 桥接挂起队列），由调用方 `tokio::spawn` 并发。
-pub async fn run_adapter(
-    adapter: Box<dyn PlatformAdapter>,
-    deps: GatewayDeps,
-) -> GanyuResult<()> {
+pub async fn run_adapter(adapter: Box<dyn PlatformAdapter>, deps: GatewayDeps) -> GanyuResult<()> {
     let name = adapter.name().to_string();
     let mut chat_agents: HashMap<String, Arc<Agent>> = HashMap::new();
     println!("[gateway:{name}] 启动（每 chat 独立会话）");
     loop {
-        let msgs = adapter.poll().await?;
+        // 常驻语义：单次 poll 失败只记录并退避重试，绝不让适配器（进而整个进程）退出。
+        let msgs = match adapter.poll().await {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("[gateway:{name}] poll 失败: {e}，2s 后重试");
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+        };
         for m in msgs {
             println!("[gateway:{name}] {}: {}", m.user, m.text);
             let chat_agent = chat_agents.entry(m.chat_id.clone()).or_insert_with(|| {
@@ -85,20 +90,23 @@ pub async fn run_adapter(
                 Err(e) => format!("抱歉，处理出错: {e}"),
             };
             println!("[gateway:{name}] ganyu: {out}");
-            adapter.send(&m.chat_id, &out).await?;
+            // 单条回复失败不应让整个平台下线：记录后继续处理后续消息。
+            if let Err(e) = adapter.send(&m.chat_id, &out).await {
+                eprintln!("[gateway:{name}] 回复 chat={} 失败: {e}", m.chat_id);
+            }
         }
     }
 }
 
 #[cfg(feature = "network")]
-mod telegram;
-#[cfg(feature = "network")]
 mod http_bridge;
+#[cfg(feature = "network")]
+mod telegram;
 
 #[cfg(feature = "network")]
-pub use telegram::TelegramAdapter;
-#[cfg(feature = "network")]
 pub use http_bridge::HttpBridge;
+#[cfg(feature = "network")]
+pub use telegram::TelegramAdapter;
 
 /// 按配置/特性装配已启用的平台适配器（fail-closed：无 token / 绑定则不启用任何平台）。
 #[cfg(feature = "network")]
@@ -109,7 +117,8 @@ pub async fn build_adapters(cfg: &crate::config::GanyuConfig) -> Vec<Box<dyn Pla
         println!("[gateway] 已装配 Telegram 适配器");
     }
     if let Some(bind) = &cfg.http_bind {
-        match HttpBridge::new(bind).await {
+        // 鉴权 token 随配置传入：非回环绑定且无 token 时 new() 直接拒绝启动（fail-closed）。
+        match HttpBridge::new(bind, cfg.http_token.clone()).await {
             Ok(b) => {
                 adapters.push(Box::new(b));
                 println!("[gateway] 已装配 HTTP 桥接适配器（绑定 {bind}）");

@@ -49,7 +49,7 @@ model = "agnes-2.5-flash"                      # 模型 id
 | `model` | **查看当前模型**；`model <新id>` 切换（写配置） |
 | `models` | **查询网关可用模型列表**（`GET /v1/models`，基于已配置端点） |
 | `update` | **从 GitHub Releases 自更新**到最新预编译二进制（覆盖 `~/.ganyu/bin`） |
-| `gateway setup <token>` / `gateway start` | **Telegram 消息平台网关**：存 token / 长轮询收发消息 |
+| `gateway setup <token>` / `gateway start` | **多平台网关**：存 Telegram bot token / 启动常驻网关（Telegram 长轮询 + HTTP Webhook 桥接，fail-closed） |
 | `run "<脚本>"` | ReAct 多步推理，打印轨迹 |
 | `agent "任务" --mode <范式>` | 以指定范式编排（single/react/plan/multi/router/blackboard/graph） |
 | `sag "问题"` | 知识分析（默认 `examples/sample_mdl.json`） |
@@ -63,7 +63,7 @@ model = "agnes-2.5-flash"                      # 模型 id
 ganyu setup                                       # 交互式配置模型
 ganyu model gpt-4o                                 # 切换模型
 ganyu update                                       # 升级到最新 release
-ganyu gateway setup 123456:ABC... && ganyu gateway start   # 接 Telegram
+ganyu gateway setup 123456:ABC... && ganyu gateway start   # 接 Telegram + HTTP 桥接
 ganyu chat                                         # 交互对话（接真模型）
 ganyu run "@calc (1+2)*3"                          # → 9（离线可用）
 # 含换行内容的工具参数（file_write/remember 等）用 JSON 调用——@tool 参数是单行协议
@@ -74,6 +74,28 @@ ganyu sag "上月华东区利润最高的三个产品"
 GANYU_AUDIT=1 ganyu run "@calc 2+3"                # 审计 JSON 到 stderr
 GANYU_ALLOW_SHELL=1 ganyu run "@exec echo hi"      # exec（需 shell 特性）
 ```
+
+## HTTP Webhook 桥接
+
+`gateway start` 除 Telegram 外，还会按 `[gateway] http_bind` 起一个 HTTP 桥接（默认 `127.0.0.1:8080`），
+供任意外部系统把消息推给 agent：
+
+```bash
+curl -X POST http://127.0.0.1:8080/message \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"你好"}'
+# → {"reply":"...","request_id":"..."}
+```
+
+| 规则 | 行为 |
+|------|------|
+| 绑定 `127.0.0.1` / `::1` / `localhost` | 无需 token，直接放行（默认场景） |
+| 绑定非回环地址（如 `0.0.0.0:8080`） | **必须**配 `GANYU_HTTP_TOKEN`，否则 `gateway start` 拒绝启动（fail-closed，不降级） |
+| 已配 token | 请求须带 `Authorization: Bearer <token>`，缺失或错误 → `401` |
+| 请求体 | 上限 64 KiB，超限 → `413`；`text` 为空 → `400` |
+| agent 无响应 | 超时（默认 120s）→ `504`，并清理该请求的等待槽 |
+
+> 桥接只提供明文 HTTP。**TLS 终结请交给反向代理**（nginx / Caddy），不要把非回环绑定直接暴露到公网。
 
 ## 常见问题
 
@@ -88,3 +110,5 @@ GANYU_ALLOW_SHELL=1 ganyu run "@exec echo hi"      # exec（需 shell 特性）
 | `update` 找不到资产 | 该版本未发布 release（先 `git tag vX.Y.Z && git push --tags`），或稍后重试 |
 | `update` 报 sha256 校验失败 | 资产被篡改或下载损坏，立即停止并重新 update（校验文件缺失时仅警告不阻断） |
 | `gateway` 未配置 | 先 `ganyu gateway setup <bot_token>`；token 在 [BotFather](https://t.me/BotFather) 创建 |
+| 桥接拒绝启动（非回环未配 token） | 绑定地址不是 `127.0.0.1` 时必须设 `GANYU_HTTP_TOKEN`，否则按 fail-closed 拒绝启动；改绑回环或配 token 二选一 |
+| 桥接返回 `401` | 请求未带或带错 `Authorization: Bearer <token>`（token 与 `GANYU_HTTP_TOKEN` / `[gateway] http_token` 一致） |

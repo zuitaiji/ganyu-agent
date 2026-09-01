@@ -28,8 +28,12 @@ pub fn config_path() -> Option<String> {
 /// 当前配置文件中的 [model] 段（供 `setup` / `model` 显示现状）。
 pub fn read_model_config() -> (Option<String>, Option<String>, Option<String>) {
     let path = config_path();
-    let Some(path) = path else { return (None, None, None) };
-    let Ok(text) = std::fs::read_to_string(&path) else { return (None, None, None) };
+    let Some(path) = path else {
+        return (None, None, None);
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return (None, None, None);
+    };
     #[derive(serde::Deserialize)]
     struct FileCfg {
         #[serde(default)]
@@ -41,8 +45,12 @@ pub fn read_model_config() -> (Option<String>, Option<String>, Option<String>) {
         api_key: Option<String>,
         model: Option<String>,
     }
-    let Ok(parsed) = toml::from_str::<FileCfg>(&text) else { return (None, None, None) };
-    let Some(m) = parsed.model else { return (None, None, None) };
+    let Ok(parsed) = toml::from_str::<FileCfg>(&text) else {
+        return (None, None, None);
+    };
+    let Some(m) = parsed.model else {
+        return (None, None, None);
+    };
     (m.base_url, m.api_key, m.model)
 }
 
@@ -59,8 +67,14 @@ pub fn write_model_config(base_url: &str, api_key: &str, model: &str) -> crate::
         .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
         .unwrap_or_else(|| toml::Value::Table(Default::default()));
     let mut model_tbl = toml::map::Map::new();
-    model_tbl.insert("base_url".to_string(), toml::Value::String(base_url.to_string()));
-    model_tbl.insert("api_key".to_string(), toml::Value::String(api_key.to_string()));
+    model_tbl.insert(
+        "base_url".to_string(),
+        toml::Value::String(base_url.to_string()),
+    );
+    model_tbl.insert(
+        "api_key".to_string(),
+        toml::Value::String(api_key.to_string()),
+    );
     model_tbl.insert("model".to_string(), toml::Value::String(model.to_string()));
     if let toml::Value::Table(map) = &mut value {
         map.insert("model".to_string(), toml::Value::Table(model_tbl));
@@ -92,11 +106,15 @@ pub fn read_gateway_token() -> Option<String> {
     parsed.gateway?.telegram_token
 }
 
-/// 读取 [gateway] 段的 HTTP 桥接绑定地址（`ganyu gateway start` 用）。
-/// 返回 `Some(addr)` 时启用 HTTP 桥接适配器（OpenClaw/任意平台经 HTTP 转发到 ganyu）。
-pub fn read_gateway_http_bind() -> Option<String> {
-    let path = config_path()?;
-    let text = std::fs::read_to_string(&path).ok()?;
+/// 读取 [gateway] 段的 HTTP 桥接配置：绑定地址 + 鉴权 token。
+/// 两者同属 `[gateway]` 段，一次解析避免重复读文件与结构体重复定义。
+fn read_gateway_http() -> (Option<String>, Option<String>) {
+    let Some(path) = config_path() else {
+        return (None, None);
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return (None, None);
+    };
     #[derive(serde::Deserialize)]
     struct FileCfg {
         #[serde(default)]
@@ -105,9 +123,32 @@ pub fn read_gateway_http_bind() -> Option<String> {
     #[derive(serde::Deserialize)]
     struct GatewayCfg {
         http_bind: Option<String>,
+        http_token: Option<String>,
     }
-    let parsed = toml::from_str::<FileCfg>(&text).ok()?;
-    parsed.gateway?.http_bind.filter(|s| !s.trim().is_empty())
+    let Ok(parsed) = toml::from_str::<FileCfg>(&text) else {
+        return (None, None);
+    };
+    let Some(gw) = parsed.gateway else {
+        return (None, None);
+    };
+    (
+        gw.http_bind.filter(|s| !s.trim().is_empty()),
+        gw.http_token.filter(|s| !s.trim().is_empty()),
+    )
+}
+
+/// 读取 [gateway] 段的 HTTP 桥接绑定地址（`ganyu gateway start` 用）。
+/// 返回 `Some(addr)` 时启用 HTTP 桥接适配器（OpenClaw/任意平台经 HTTP 转发到 ganyu）。
+pub fn read_gateway_http_bind() -> Option<String> {
+    read_gateway_http().0
+}
+
+/// 读取 [gateway] 段的 HTTP 桥接鉴权 token（Bearer）。
+///
+/// 安全约束：绑定**非回环地址**（如 0.0.0.0 / 局域网 IP）时**必须**配置，
+/// 否则桥接拒绝启动（fail-closed）——避免把带 shell 权限的 agent 无鉴权暴露到网络。
+pub fn read_gateway_http_token() -> Option<String> {
+    read_gateway_http().1
 }
 
 /// 写入 [gateway] 段（`ganyu gateway setup` 用）。保留其他段。
@@ -123,7 +164,10 @@ pub fn write_gateway_token(token: &str) -> crate::GanyuResult<()> {
         .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
         .unwrap_or_else(|| toml::Value::Table(Default::default()));
     let mut gw_tbl = toml::map::Map::new();
-    gw_tbl.insert("telegram_token".to_string(), toml::Value::String(token.to_string()));
+    gw_tbl.insert(
+        "telegram_token".to_string(),
+        toml::Value::String(token.to_string()),
+    );
     if let toml::Value::Table(map) = &mut value {
         map.insert("gateway".to_string(), toml::Value::Table(gw_tbl));
     }
@@ -144,15 +188,37 @@ pub const ENV_DOCS: &[(&str, &str)] = &[
     ("GANYU_ALLOW_SHELL", "=1 时放行 exec（需 shell 特性编译）"),
     ("GANYU_ALLOW_PLUGINS", "=1 时启用插件发现（C2）"),
     ("GANYU_PLUGIN_ALLOW", "插件程序名白名单（逗号分隔）"),
-    ("GANYU_TOOL_CACHE_TTL", "只读工具结果缓存 TTL（毫秒，>0 启用；默认 0=关）"),
-    ("GANYU_LLM_CACHE_TTL", "LLM 响应缓存 TTL（毫秒，>0 启用；默认 0=关）"),
-    ("GANYU_RATE_PER_MIN", "网关请求速率上限（每分钟；默认 0=不限）"),
+    (
+        "GANYU_TOOL_CACHE_TTL",
+        "只读工具结果缓存 TTL（毫秒，>0 启用；默认 0=关）",
+    ),
+    (
+        "GANYU_LLM_CACHE_TTL",
+        "LLM 响应缓存 TTL（毫秒，>0 启用；默认 0=关）",
+    ),
+    (
+        "GANYU_RATE_PER_MIN",
+        "网关请求速率上限（每分钟；默认 0=不限）",
+    ),
     ("GANYU_AUDIT", "审计日志：1=stderr，或文件路径（默认 0=关）"),
     ("OV_BASE", "OpenViking 记忆服务地址（network 特性下生效）"),
-    ("OPENAI_API_BASE / OPENAI_API_KEY", "OpenAI 兼容后端（network 特性下生效）"),
-    ("OPENAI_MODEL", "模型 id（默认 gpt-4o-mini；推理模型自动兼容 reasoning_content）"),
+    (
+        "OPENAI_API_BASE / OPENAI_API_KEY",
+        "OpenAI 兼容后端（network 特性下生效）",
+    ),
+    (
+        "OPENAI_MODEL",
+        "模型 id（默认 gpt-4o-mini；推理模型自动兼容 reasoning_content）",
+    ),
     ("GANYU_CONFIG", "配置文件路径（默认 ~/.ganyu/config.toml）"),
-    ("GANYU_HTTP_BIND", "多平台网关 HTTP 桥接绑定地址（如 127.0.0.1:8080）；network 特性下启用"),
+    (
+        "GANYU_HTTP_BIND",
+        "多平台网关 HTTP 桥接绑定地址（如 127.0.0.1:8080）；network 特性下启用",
+    ),
+    (
+        "GANYU_HTTP_TOKEN",
+        "HTTP 桥接 Bearer 鉴权 token；绑定非回环地址时必填（否则桥接拒绝启动）",
+    ),
 ];
 
 /// 配置自愈：配置文件不存在时自动生成可编辑模板（**不含密钥**）。
@@ -194,6 +260,8 @@ pub struct GanyuConfig {
     pub plugins_allowed: bool,
     /// 多平台网关 HTTP 桥接绑定地址（如 127.0.0.1:8080）。`Some` 时启用 HTTP 桥接适配器。
     pub http_bind: Option<String>,
+    /// HTTP 桥接鉴权 token（Bearer）。绑定非回环地址时必填（否则桥接 fail-closed 拒绝启动）。
+    pub http_token: Option<String>,
 }
 
 /// 审计目标：关闭 / stderr / 文件。
@@ -226,6 +294,10 @@ impl GanyuConfig {
                 .ok()
                 .filter(|s| !s.trim().is_empty())
                 .or_else(read_gateway_http_bind),
+            http_token: std::env::var("GANYU_HTTP_TOKEN")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .or_else(read_gateway_http_token),
         }
     }
 
@@ -281,6 +353,8 @@ impl GanyuConfig {
             allow_plugins: Option<bool>,
             #[serde(default)]
             http_bind: Option<String>,
+            #[serde(default)]
+            http_token: Option<String>,
         }
         let Ok(s): Result<Settings, _> = serde_json::from_str(&text) else {
             return; // 解析错误 → 静默跳过
@@ -312,6 +386,9 @@ impl GanyuConfig {
         }
         if let Some(v) = s.http_bind.filter(|x| !x.trim().is_empty()) {
             self.http_bind = Some(v);
+        }
+        if let Some(v) = s.http_token.filter(|x| !x.trim().is_empty()) {
+            self.http_token = Some(v);
         }
     }
 
@@ -345,6 +422,20 @@ fn pi_config_dir() -> Option<std::path::PathBuf> {
     })
 }
 
+/// 绑定地址是否为回环（`127.0.0.1` / `::1` / `localhost`）。
+///
+/// 用途：HTTP 桥接的安全判定——非回环绑定必须配置鉴权 token（fail-closed），
+/// 避免把具备 shell / 文件工具权限的 agent 无鉴权暴露到网络。
+pub fn is_loopback_bind(bind: &str) -> bool {
+    // 形如 "127.0.0.1:8080" / "[::1]:8080" / "localhost:8080"
+    let host = bind.rsplit_once(':').map(|(h, _)| h).unwrap_or(bind);
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => host.eq_ignore_ascii_case("localhost"),
+    }
+}
+
 /// 安全基线自检（治理面）：返回建议列表（空=无建议）。
 /// 不阻断运行，仅给出生产部署前的告警——与 Hermes「8 层防线、逐步放权」一致。
 pub fn security_baseline(cfg: &GanyuConfig) -> Vec<String> {
@@ -352,7 +443,8 @@ pub fn security_baseline(cfg: &GanyuConfig) -> Vec<String> {
     if cfg.shell_allowed && !cfg::sandbox_available() {
         advice.push(
             "GANYU_ALLOW_SHELL=1 但未开启 sandbox 特性/容器隔离：exec 将以进程权限直跑，\
-             生产建议用 Docker/gVisor 或开启 sandbox(Landlock, Linux)。".into(),
+             生产建议用 Docker/gVisor 或开启 sandbox(Landlock, Linux)。"
+                .into(),
         );
     }
     if cfg.plugins_allowed {
@@ -364,11 +456,21 @@ pub fn security_baseline(cfg: &GanyuConfig) -> Vec<String> {
     if std::env::var("GANYU_MEM_KEY").is_ok() {
         let key = std::env::var("GANYU_MEM_KEY").unwrap_or_default();
         if key.len() < 12 {
-            advice.push("GANYU_MEM_KEY 过短（<12 字符）：记忆加密强度不足，建议 ≥16 字符强口令。".into());
+            advice.push(
+                "GANYU_MEM_KEY 过短（<12 字符）：记忆加密强度不足，建议 ≥16 字符强口令。".into(),
+            );
         }
     }
     if cfg.rate_per_min == 0 && cfg.llm_cache_enabled() {
         advice.push("已启用 LLM 缓存但未设 GANYU_RATE_PER_MIN：建议同时限速以防突发流量。".into());
+    }
+    if let Some(bind) = &cfg.http_bind {
+        if !is_loopback_bind(bind) {
+            advice.push(format!(
+                "HTTP 桥接绑定在 {bind}（非回环地址）：必须配置 GANYU_HTTP_TOKEN，\
+                 且仅应在可信网络或反向代理之后暴露——agent 具备 shell / 文件工具权限。"
+            ));
+        }
     }
     advice
 }
@@ -379,11 +481,16 @@ pub fn ttl_from_str(s: &str) -> Duration {
 }
 
 fn env_ttl(name: &str) -> Duration {
-    std::env::var(name).ok().map(|s| ttl_from_str(&s)).unwrap_or_else(|| Duration::ZERO)
+    std::env::var(name)
+        .ok()
+        .map(|s| ttl_from_str(&s))
+        .unwrap_or_else(|| Duration::ZERO)
 }
 
 fn env_u32(name: &str) -> Option<u32> {
-    std::env::var(name).ok().and_then(|s| s.trim().parse::<u32>().ok())
+    std::env::var(name)
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
 }
 
 /// sandbox 是否可用（当前编译目标 + 特性）。
@@ -409,10 +516,8 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn tmp_config(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "ganyu-cfg-test-{name}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("ganyu-cfg-test-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("config.toml")
     }
@@ -437,11 +542,7 @@ mod tests {
         let p = tmp_config("preserve");
         std::env::set_var("GANYU_CONFIG", &p);
         // 预置文件含其他段
-        std::fs::write(
-            &p,
-            "[other]\nkey = \"keep-me\"\n",
-        )
-        .unwrap();
+        std::fs::write(&p, "[other]\nkey = \"keep-me\"\n").unwrap();
         write_model_config("https://api.test/v1", "sk-k", "m").unwrap();
         let text = std::fs::read_to_string(&p).unwrap();
         assert!(text.contains("keep-me"), "其他段被覆盖: {text}");
@@ -488,10 +589,7 @@ mod tests {
 
     /// 在临时目录写 settings.json，返回该目录路径（模拟 ~/.ganyu/）。
     fn tmp_pi_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "ganyu-pi-test-{name}-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("ganyu-pi-test-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

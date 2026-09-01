@@ -57,7 +57,11 @@ pub struct LocalReasoner;
 impl Reasoner for LocalReasoner {
     async fn decide(&self, user_msg: &str, known: &HashSet<String>) -> GanyuResult<Decision> {
         if let Some((tool, args, remaining)) = parse_known_tool(user_msg, known) {
-            return Ok(Decision::Act { tool, args, remaining });
+            return Ok(Decision::Act {
+                tool,
+                args,
+                remaining,
+            });
         }
         Ok(Decision::Final(default_fallback(user_msg)))
     }
@@ -113,15 +117,16 @@ impl Reasoner for LlmReasoner {
         // 避免模型"假装"执行（如直接回复"已记住"而未真调 remember），
         // 与离线 LocalReasoner 行为对齐；模型只负责自由对话。
         if let Some((tool, args, remaining)) = parse_known_tool(user_msg, known) {
-            return Ok(Decision::Act { tool, args, remaining });
+            return Ok(Decision::Act {
+                tool,
+                args,
+                remaining,
+            });
         }
         // 稳定 system 前缀（排序工具清单 + 固定模板）→ 长会话模型侧前缀缓存命中。
         // 消息序：[system(稳定前缀), user(增量)] —— 动态内容只在 user 段追加。
         let sys = self.system_prompt(known);
-        let messages = [
-            Message::system(sys),
-            Message::user(user_msg.to_string()),
-        ];
+        let messages = [Message::system(sys), Message::user(user_msg.to_string())];
         match self.gateway.complete(&messages).await {
             Ok(out) => {
                 let text = out.as_str();
@@ -273,12 +278,13 @@ mod tests {
     async fn local_reasoner_routes_tool() {
         let mut known = HashSet::new();
         known.insert("calc".to_string());
-        let d = LocalReasoner
-            .decide("@calc 1+1", &known)
-            .await
-            .unwrap();
+        let d = LocalReasoner.decide("@calc 1+1", &known).await.unwrap();
         match d {
-            Decision::Act { tool, args, remaining } => {
+            Decision::Act {
+                tool,
+                args,
+                remaining,
+            } => {
                 assert_eq!(tool, "calc");
                 assert_eq!(args, "1+1");
                 assert!(remaining.is_empty());
@@ -295,7 +301,9 @@ mod tests {
         let script = "@echo step1\n@calc 2+2\n收尾";
         let d = LocalReasoner.decide(script, &known).await.unwrap();
         match d {
-            Decision::Act { tool, remaining, .. } => {
+            Decision::Act {
+                tool, remaining, ..
+            } => {
                 assert_eq!(tool, "echo");
                 assert!(remaining.contains("calc 2+2"));
                 assert!(remaining.contains("收尾"));
@@ -314,7 +322,11 @@ mod tests {
             .await
             .unwrap();
         match d {
-            Decision::Act { tool, args, remaining } => {
+            Decision::Act {
+                tool,
+                args,
+                remaining,
+            } => {
                 assert_eq!(tool, "file_write");
                 assert_eq!(args, "a.txt\nhello");
                 assert!(remaining.is_empty());
@@ -332,7 +344,11 @@ mod tests {
             .await
             .unwrap();
         match d {
-            Decision::Act { tool, args, remaining } => {
+            Decision::Act {
+                tool,
+                args,
+                remaining,
+            } => {
                 assert_eq!(tool, "file_write");
                 assert_eq!(args, "a.txt\nhello");
                 assert!(remaining.is_empty());

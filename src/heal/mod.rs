@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 /// 熔断器状态机。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BreakerState {
-    Closed, // 正常放行
-    Open,   // 熔断中，拒绝放行
+    Closed,   // 正常放行
+    Open,     // 熔断中，拒绝放行
     HalfOpen, // 冷却结束，允许一次探针
 }
 

@@ -11,9 +11,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use ganyu_agent::core::llm::{DynBackend, LlmBackend, LocalBackend, Message};
 #[cfg(feature = "network")]
 use ganyu_agent::core::llm::OpenAiBackend;
+use ganyu_agent::core::llm::{DynBackend, LlmBackend, LocalBackend, Message};
 use ganyu_agent::core::loop_::{LlmReasoner, LocalReasoner, Reasoner, Step};
 use ganyu_agent::core::memory::{DynMemory, LocalMemory};
 use ganyu_agent::core::unit::{RunContext, Unit};
@@ -42,7 +42,13 @@ fn sha256_of_file(path: &Path) -> GanyuResult<String> {
     #[cfg(target_os = "windows")]
     {
         let out = std::process::Command::new("certutil")
-            .args(["-hashfile", path.to_str().ok_or_else(|| GanyuError::Http("文件路径包含非 UTF-8 字符，无法计算 SHA256".to_string()))?, "SHA256"])
+            .args([
+                "-hashfile",
+                path.to_str().ok_or_else(|| {
+                    GanyuError::Http("文件路径包含非 UTF-8 字符，无法计算 SHA256".to_string())
+                })?,
+                "SHA256",
+            ])
             .output()
             .map_err(GanyuError::Io)?;
         let text = String::from_utf8_lossy(&out.stdout);
@@ -52,7 +58,9 @@ fn sha256_of_file(path: &Path) -> GanyuResult<String> {
                 return Ok(t.to_lowercase());
             }
         }
-        Err(GanyuError::Http("certutil 输出解析失败（未找到 SHA256 行）".to_string()))
+        Err(GanyuError::Http(
+            "certutil 输出解析失败（未找到 SHA256 行）".to_string(),
+        ))
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -118,7 +126,11 @@ mod update_sig_interop_tests {
     fn wrong_message_is_rejected_by_ring() {
         let pubkey = ganyu_agent::security::decode_hex(PUB_HEX).unwrap();
         let sig = ganyu_agent::security::decode_hex(SIG_HEX).unwrap();
-        assert!(!super::verify_update_signature(&pubkey, b"different message", &sig));
+        assert!(!super::verify_update_signature(
+            &pubkey,
+            b"different message",
+            &sig
+        ));
     }
 }
 
@@ -206,7 +218,9 @@ async fn main() -> GanyuResult<()> {
     // 配置自愈：~/.ganyu/config.toml 缺失时自动生成模板（目录被清理后不再静默失联）。
     if let Some(p) = ganyu_agent::config::ensure_config_template() {
         eprintln!("[ganyu] 未找到配置文件，已自动生成模板：{p}");
-        eprintln!("        填入 [model] 的 api_key 后即可对话（或运行 ganyu-agent setup 交互配置）");
+        eprintln!(
+            "        填入 [model] 的 api_key 后即可对话（或运行 ganyu-agent setup 交互配置）"
+        );
     }
     // 一站式：从 ~/.ganyu/config.toml 加载模型配置（已设置的环境变量优先）。
     // 凭据改为下方 read_model_config 显式取用（F-10），不再全局 set_var。
@@ -341,9 +355,7 @@ async fn main() -> GanyuResult<()> {
             let name = positional.first().cloned().unwrap_or_default();
             let args = positional[1..].join(" ");
             println!("session: {session}");
-            let out = tools
-                .call(&format!("skill:{name}"), &Value(args))
-                .await?;
+            let out = tools.call(&format!("skill:{name}"), &Value(args)).await?;
             println!("{out}");
         }
         "sag" => {
@@ -421,7 +433,11 @@ async fn main() -> GanyuResult<()> {
                 .unwrap_or_else(|| "gpt-4o-mini(默认)".into());
             println!(
                 "模型配置 : base={} key={} model={}",
-                if base.is_empty() { "(未设置)" } else { &base },
+                if base.is_empty() {
+                    "(未设置)"
+                } else {
+                    &base
+                },
                 if key_set { "已设置" } else { "未设置" },
                 model,
             );
@@ -437,7 +453,11 @@ async fn main() -> GanyuResult<()> {
             println!("  {:<22} {:<14} {}", "能力", "所需特性", "状态");
             println!("  {:<22} {:<14} {}", "----", "--------", "----");
             for row in capability_matrix() {
-                let status = if row.enabled { "✅ 启用" } else { "❌ 禁用" };
+                let status = if row.enabled {
+                    "✅ 启用"
+                } else {
+                    "❌ 禁用"
+                };
                 println!("  {:<22} {:<14} {}", row.name, row.feature, status);
             }
             let mem_path = default_memory_path();
@@ -447,9 +467,7 @@ async fn main() -> GanyuResult<()> {
                 mem_path.display(),
                 if mem_ok { "存在" } else { "尚未创建" }
             );
-            let model_ready = cfg!(feature = "network")
-                && !base.is_empty()
-                && key_set;
+            let model_ready = cfg!(feature = "network") && !base.is_empty() && key_set;
             println!(
                 "状态     : {}",
                 if model_ready {
@@ -529,43 +547,47 @@ async fn main() -> GanyuResult<()> {
                 }
             }
 
-            let ask = |label: &str, cur: Option<String>, is_secret: bool| -> std::io::Result<String> {
-                let hint = if is_secret {
-                    mask(&cur).map(|m| format!(" [{m}]")).unwrap_or_default()
-                } else {
-                    cur.as_deref().map(|c| format!(" [{c}]")).unwrap_or_default()
+            let ask =
+                |label: &str, cur: Option<String>, is_secret: bool| -> std::io::Result<String> {
+                    let hint = if is_secret {
+                        mask(&cur).map(|m| format!(" [{m}]")).unwrap_or_default()
+                    } else {
+                        cur.as_deref()
+                            .map(|c| format!(" [{c}]"))
+                            .unwrap_or_default()
+                    };
+                    print!("{label}{hint}: ");
+                    std::io::stdout().flush()?;
+                    // 密钥用掩码输入（rpassword，终端不回显明文）
+                    let v = if is_secret {
+                        rpassword::read_password()?.trim().to_string()
+                    } else {
+                        let mut line = String::new();
+                        std::io::stdin().read_line(&mut line)?;
+                        line.trim().to_string()
+                    };
+                    if v.is_empty() {
+                        Ok(cur.unwrap_or_default())
+                    } else {
+                        Ok(v)
+                    }
                 };
-                print!("{label}{hint}: ");
-                std::io::stdout().flush()?;
-                // 密钥用掩码输入（rpassword，终端不回显明文）
-                let v = if is_secret {
-                    rpassword::read_password()?.trim().to_string()
-                } else {
-                    let mut line = String::new();
-                    std::io::stdin().read_line(&mut line)?;
-                    line.trim().to_string()
-                };
-                if v.is_empty() {
-                    Ok(cur.unwrap_or_default())
-                } else {
-                    Ok(v)
-                }
-            };
 
             let interactive = std::io::stdin().is_terminal();
-            let (base, key, model) = if interactive && arg_base.is_none() && arg_key.is_none() && arg_model.is_none() {
-                println!("== ganyu setup（配置模型，回车沿用当前值）==");
-                let base = ask("base_url", cur_base.clone(), false)?;
-                let key = ask("api_key", cur_key.clone(), true)?;
-                let model = ask("model", cur_model.clone(), false)?;
-                (base, key, model)
-            } else {
-                (
-                    arg_base.or(cur_base).unwrap_or_default(),
-                    arg_key.or(cur_key).unwrap_or_default(),
-                    arg_model.or(cur_model).unwrap_or_default(),
-                )
-            };
+            let (base, key, model) =
+                if interactive && arg_base.is_none() && arg_key.is_none() && arg_model.is_none() {
+                    println!("== ganyu setup（配置模型，回车沿用当前值）==");
+                    let base = ask("base_url", cur_base.clone(), false)?;
+                    let key = ask("api_key", cur_key.clone(), true)?;
+                    let model = ask("model", cur_model.clone(), false)?;
+                    (base, key, model)
+                } else {
+                    (
+                        arg_base.or(cur_base).unwrap_or_default(),
+                        arg_key.or(cur_key).unwrap_or_default(),
+                        arg_model.or(cur_model).unwrap_or_default(),
+                    )
+                };
 
             if base.trim().is_empty() || key.trim().is_empty() || model.trim().is_empty() {
                 eprintln!("base_url / api_key / model 均不能为空（参数模式示例：ganyu setup --base_url X --api_key Y --model Z）");
@@ -577,7 +599,12 @@ async fn main() -> GanyuResult<()> {
             // F-10：密钥不再写入全局环境，配置文件已落盘，下次启动自动加载。
             let path = ganyu_agent::config::config_path().unwrap_or_default();
             println!("✅ 已写入 {path}");
-            println!("   模型: {} ({}，key={})", model.trim(), base.trim(), mask(&Some(key.trim().to_string())).unwrap_or_default());
+            println!(
+                "   模型: {} ({}，key={})",
+                model.trim(),
+                base.trim(),
+                mask(&Some(key.trim().to_string())).unwrap_or_default()
+            );
             println!("   直接对话: ganyu-agent chat（或 ganyu）");
         }
         "update" => {
@@ -586,21 +613,27 @@ async fn main() -> GanyuResult<()> {
             {
                 let req_version = positional
                     .iter()
-                    .find(|a| a.starts_with("v") && a[1..].chars().all(|c| c.is_ascii_digit() || c == '.'))
+                    .find(|a| {
+                        a.starts_with("v") && a[1..].chars().all(|c| c.is_ascii_digit() || c == '.')
+                    })
                     .cloned()
                     .unwrap_or_else(|| "latest".to_string());
-                let api_url = format!("https://api.github.com/repos/zuitaiji/ganyu-agent/releases/{req_version}");
+                let api_url = format!(
+                    "https://api.github.com/repos/zuitaiji/ganyu-agent/releases/{req_version}"
+                );
                 let client = reqwest::Client::builder()
                     .user_agent("ganyu-update")
                     .build()
                     .map_err(|e| GanyuError::Http(e.to_string()))?;
                 let release: serde_json::Value = client
                     .get(&api_url)
-                    .send().await
+                    .send()
+                    .await
                     .map_err(|e| GanyuError::Http(e.to_string()))?
                     .error_for_status()
                     .map_err(|e| GanyuError::Http(e.to_string()))?
-                    .json().await
+                    .json()
+                    .await
                     .map_err(|e| GanyuError::Http(e.to_string()))?;
                 let tag = release["tag_name"].as_str().unwrap_or(&req_version);
 
@@ -616,11 +649,19 @@ async fn main() -> GanyuResult<()> {
                     }
                     "linux" => format!(
                         "ganyu-agent-linux-{}.tar.gz",
-                        if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" }
+                        if cfg!(target_arch = "aarch64") {
+                            "arm64"
+                        } else {
+                            "x86_64"
+                        }
                     ),
                     "macos" => format!(
                         "ganyu-agent-macos-{}.tar.gz",
-                        if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" }
+                        if cfg!(target_arch = "aarch64") {
+                            "arm64"
+                        } else {
+                            "x86_64"
+                        }
                     ),
                     other => {
                         eprintln!("暂不支持平台: {other}（可源码编译: git clone + cargo install --features hardened）");
@@ -630,7 +671,10 @@ async fn main() -> GanyuResult<()> {
 
                 let url = release["assets"]
                     .as_array()
-                    .and_then(|a| a.iter().find(|x| x["name"].as_str() == Some(asset.as_str())))
+                    .and_then(|a| {
+                        a.iter()
+                            .find(|x| x["name"].as_str() == Some(asset.as_str()))
+                    })
                     .and_then(|x| x["browser_download_url"].as_str())
                     .map(|u| u.to_string());
                 let Some(url) = url else {
@@ -643,17 +687,24 @@ async fn main() -> GanyuResult<()> {
                     .unwrap_or_else(|_| ".".into());
                 let bin_dir = format!("{home}/.ganyu/bin");
                 std::fs::create_dir_all(&bin_dir)?;
-                let bin_path = format!("{bin_dir}/ganyu-agent{}", if os == "windows" { ".exe" } else { "" });
+                let bin_path = format!(
+                    "{bin_dir}/ganyu-agent{}",
+                    if os == "windows" { ".exe" } else { "" }
+                );
 
                 println!("[update] {tag} → {bin_path}");
                 // 临时文件加随机后缀，避免并发 update 冲突
-                let tmp = std::env::temp_dir()
-                    .join(format!("{asset}.{}.tmp", uuid::Uuid::new_v4()));
-                let bytes = client.get(&url).send().await
+                let tmp =
+                    std::env::temp_dir().join(format!("{asset}.{}.tmp", uuid::Uuid::new_v4()));
+                let bytes = client
+                    .get(&url)
+                    .send()
+                    .await
                     .map_err(|e| GanyuError::Http(e.to_string()))?
                     .error_for_status()
                     .map_err(|e| GanyuError::Http(e.to_string()))?
-                    .bytes().await
+                    .bytes()
+                    .await
                     .map_err(|e| GanyuError::Http(e.to_string()))?;
                 std::fs::write(&tmp, &bytes)?;
                 println!("[update] 下载完成（{} bytes），校验 sha256…", bytes.len());
@@ -665,13 +716,19 @@ async fn main() -> GanyuResult<()> {
                     match ganyu_agent::security::decode_hex(&pubkey_hex) {
                         Some(pubkey) if pubkey.len() == 32 => {
                             let sig_url = format!("{url}.sig");
-                            let sig_bytes = client.get(&sig_url).send().await
+                            let sig_bytes = client
+                                .get(&sig_url)
+                                .send()
+                                .await
                                 .map_err(|e| GanyuError::Http(e.to_string()))?
                                 .error_for_status()
                                 .map_err(|e| GanyuError::Http(e.to_string()))?
-                                .bytes().await
+                                .bytes()
+                                .await
                                 .map_err(|e| GanyuError::Http(e.to_string()))?;
-                            if sig_bytes.len() != 64 || !verify_update_signature(&pubkey, &bytes, &sig_bytes) {
+                            if sig_bytes.len() != 64
+                                || !verify_update_signature(&pubkey, &bytes, &sig_bytes)
+                            {
                                 eprintln!("[fatal] ed25519 签名校验失败（缺 .sig 或签名不符），拒绝应用更新。");
                                 eprintln!("        请确认发布方公钥已正确写入 GANYU_UPDATE_PUBKEY，或改用 GANYU_UPDATE_ALLOW_NOCHECK=1 强制（不推荐）。");
                                 let _ = std::fs::remove_file(&tmp);
@@ -691,11 +748,15 @@ async fn main() -> GanyuResult<()> {
 
                 // 同源 sha256 比对（防御纵深，始终执行）
                 let sha_url = format!("{url}.sha256");
-                let sha_bytes = client.get(&sha_url).send().await
+                let sha_bytes = client
+                    .get(&sha_url)
+                    .send()
+                    .await
                     .map_err(|e| GanyuError::Http(e.to_string()))?
                     .error_for_status()
                     .map_err(|e| GanyuError::Http(e.to_string()))?
-                    .bytes().await
+                    .bytes()
+                    .await
                     .map_err(|e| GanyuError::Http(e.to_string()))?;
                 let expected = String::from_utf8_lossy(&sha_bytes)
                     .split_whitespace()
@@ -706,7 +767,9 @@ async fn main() -> GanyuResult<()> {
                     if std::env::var("GANYU_UPDATE_ALLOW_NOCHECK").is_ok() {
                         eprintln!("[warn] 未获取到 sha256 校验文件，但 GANYU_UPDATE_ALLOW_NOCHECK=1 已设置，跳过校验继续。");
                     } else {
-                        eprintln!("[fatal] 未获取到 sha256 校验文件，出于安全考虑拒绝自动应用更新。");
+                        eprintln!(
+                            "[fatal] 未获取到 sha256 校验文件，出于安全考虑拒绝自动应用更新。"
+                        );
                         eprintln!("        如需继续，请用 GANYU_UPDATE_ALLOW_NOCHECK=1 显式强制覆盖，或手动下载并用 ganyu doctor 校验。");
                         let _ = std::fs::remove_file(&tmp);
                         std::process::exit(1);
@@ -726,12 +789,16 @@ async fn main() -> GanyuResult<()> {
                 // 解压：统一 tar.gz（Windows 10 1803+ 自带 bsdtar；Linux/macOS 自带 tar）。
                 use std::process::Command;
                 {
-                    let list_out = Command::new("tar").args(["-tzf", tmp.to_str().unwrap()]).output();
+                    let list_out = Command::new("tar")
+                        .args(["-tzf", tmp.to_str().unwrap()])
+                        .output();
                     if let Ok(o) = list_out {
                         let entries = String::from_utf8_lossy(&o.stdout);
                         for e in entries.lines() {
                             if !ganyu_agent::security::is_safe_archive_entry(e) {
-                                eprintln!("[fatal] 更新包含非法路径（{e}），疑似路径穿越，已拒绝。");
+                                eprintln!(
+                                    "[fatal] 更新包含非法路径（{e}），疑似路径穿越，已拒绝。"
+                                );
                                 let _ = std::fs::remove_file(&tmp);
                                 std::process::exit(1);
                             }
@@ -784,7 +851,9 @@ async fn main() -> GanyuResult<()> {
                 let base = base.unwrap_or_default();
                 let key = key.unwrap_or_default();
                 if base.is_empty() || key.is_empty() {
-                    eprintln!("未配置端点。先运行 ganyu setup 配置 base_url/api_key 后再切换模型。");
+                    eprintln!(
+                        "未配置端点。先运行 ganyu setup 配置 base_url/api_key 后再切换模型。"
+                    );
                     std::process::exit(1);
                 }
                 ganyu_agent::config::write_model_config(&base, &key, new_model)?;
@@ -815,10 +884,7 @@ async fn main() -> GanyuResult<()> {
         }
         "gateway" => {
             // Telegram 消息平台网关（Hermes 式）：setup 存 token，start 长轮询收发消息。
-            let sub = positional
-                .first()
-                .map(|s| s.as_str())
-                .unwrap_or("start");
+            let sub = positional.first().map(|s| s.as_str()).unwrap_or("start");
             match sub {
                 "setup" => {
                     #[cfg(feature = "network")]
@@ -830,8 +896,14 @@ async fn main() -> GanyuResult<()> {
                                 std::io::stdout().flush().ok();
                                 let t = rpassword::read_password().ok()?;
                                 let t = t.trim().to_string();
-                                if t.is_empty() { None } else { Some(t) }
-                            } else { None }
+                                if t.is_empty() {
+                                    None
+                                } else {
+                                    Some(t)
+                                }
+                            } else {
+                                None
+                            }
                         });
                         let Some(token) = token else {
                             eprintln!("用法: ganyu gateway setup <bot_token> 或 ganyu gateway setup（交互输入）");
@@ -870,7 +942,10 @@ async fn main() -> GanyuResult<()> {
                         for adapter in adapters {
                             handles.push(tokio::spawn(run_adapter(adapter, deps.clone())));
                         }
-                        println!("[gateway] 已启动 {} 个平台适配器，Ctrl+C 退出。", handles.len());
+                        println!(
+                            "[gateway] 已启动 {} 个平台适配器，Ctrl+C 退出。",
+                            handles.len()
+                        );
                         for h in handles {
                             let _ = h.await;
                         }
@@ -947,12 +1022,17 @@ async fn main() -> GanyuResult<()> {
             if std::io::stdin().is_terminal() {
                 // 交互式 REPL（对标 OpenClaw / Hermes 的对话体验）：
                 // 多轮对话共享同一会话，记忆/上下文跨轮延续；输入 /quit 或 Ctrl+C 退出。
-                println!("ganyu-agent 交互对话已启动（同一会话延续上下文；输入 /quit 或 Ctrl+C 退出）");
+                println!(
+                    "ganyu-agent 交互对话已启动（同一会话延续上下文；输入 /quit 或 Ctrl+C 退出）"
+                );
                 // F-10：凭据统一用 has_creds（env 或 config.toml）
                 if !has_creds {
                     println!("⚠️ 未配置模型（当前为离线本地兜底）。编辑 ~/.ganyu/config.toml 的 [model] 段，或运行 ganyu setup 配置，或 ganyu-agent doctor 查看指引。");
                 } else {
-                    println!("💡 已连接模型：{}", std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "默认".into()));
+                    println!(
+                        "💡 已连接模型：{}",
+                        std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "默认".into())
+                    );
                 }
                 let mut line = String::new();
                 loop {
@@ -1102,30 +1182,134 @@ struct CapabilityRow {
 fn capability_matrix() -> Vec<CapabilityRow> {
     vec![
         // 始终启用（默认特性）
-        CapabilityRow { name: "memory_read/write", module: "core/memory", feature: "always", enabled: true, source: "builtin" },
-        CapabilityRow { name: "skill:* (特性技能)", module: "ext/skills", feature: "always", enabled: true, source: "skill" },
-        CapabilityRow { name: "nomifun:* (桥接)", module: "ext/nomifun_caps", feature: "always", enabled: true, source: "skill" },
-        CapabilityRow { name: "tool:upper/diagram/git_diff(pr)", module: "tools/", feature: "always", enabled: true, source: "builtin" },
+        CapabilityRow {
+            name: "memory_read/write",
+            module: "core/memory",
+            feature: "always",
+            enabled: true,
+            source: "builtin",
+        },
+        CapabilityRow {
+            name: "skill:* (特性技能)",
+            module: "ext/skills",
+            feature: "always",
+            enabled: true,
+            source: "skill",
+        },
+        CapabilityRow {
+            name: "nomifun:* (桥接)",
+            module: "ext/nomifun_caps",
+            feature: "always",
+            enabled: true,
+            source: "skill",
+        },
+        CapabilityRow {
+            name: "tool:upper/diagram/git_diff(pr)",
+            module: "tools/",
+            feature: "always",
+            enabled: true,
+            source: "builtin",
+        },
         // shell 特性
-        CapabilityRow { name: "shell_exec", module: "ext/builtins", feature: "shell", enabled: cfg!(feature = "shell"), source: "builtin" },
+        CapabilityRow {
+            name: "shell_exec",
+            module: "ext/builtins",
+            feature: "shell",
+            enabled: cfg!(feature = "shell"),
+            source: "builtin",
+        },
         // network 特性
-        CapabilityRow { name: "web_fetch", module: "ext/builtins", feature: "network", enabled: cfg!(feature = "network"), source: "builtin" },
-        CapabilityRow { name: "http_call", module: "ext/builtins", feature: "network", enabled: cfg!(feature = "network"), source: "builtin" },
-        CapabilityRow { name: "git remote diff", module: "tools/git_diff", feature: "network", enabled: cfg!(feature = "network"), source: "builtin" },
-        CapabilityRow { name: "openai backend", module: "core/llm", feature: "network", enabled: cfg!(feature = "network"), source: "builtin" },
+        CapabilityRow {
+            name: "web_fetch",
+            module: "ext/builtins",
+            feature: "network",
+            enabled: cfg!(feature = "network"),
+            source: "builtin",
+        },
+        CapabilityRow {
+            name: "http_call",
+            module: "ext/builtins",
+            feature: "network",
+            enabled: cfg!(feature = "network"),
+            source: "builtin",
+        },
+        CapabilityRow {
+            name: "git remote diff",
+            module: "tools/git_diff",
+            feature: "network",
+            enabled: cfg!(feature = "network"),
+            source: "builtin",
+        },
+        CapabilityRow {
+            name: "openai backend",
+            module: "core/llm",
+            feature: "network",
+            enabled: cfg!(feature = "network"),
+            source: "builtin",
+        },
         // crypto + secret 特性
-        CapabilityRow { name: "memory encrypt (H1)", module: "core/memory", feature: "crypto+secret", enabled: cfg!(feature = "crypto") && cfg!(feature = "secret"), source: "builtin" },
-        CapabilityRow { name: "key erase (L1)", module: "core/memory", feature: "crypto+secret", enabled: cfg!(feature = "crypto") && cfg!(feature = "secret"), source: "builtin" },
+        CapabilityRow {
+            name: "memory encrypt (H1)",
+            module: "core/memory",
+            feature: "crypto+secret",
+            enabled: cfg!(feature = "crypto") && cfg!(feature = "secret"),
+            source: "builtin",
+        },
+        CapabilityRow {
+            name: "key erase (L1)",
+            module: "core/memory",
+            feature: "crypto+secret",
+            enabled: cfg!(feature = "crypto") && cfg!(feature = "secret"),
+            source: "builtin",
+        },
         // sign 特性
-        CapabilityRow { name: "release sign (R-1)", module: "release_sign", feature: "sign", enabled: cfg!(feature = "sign"), source: "builtin" },
+        CapabilityRow {
+            name: "release sign (R-1)",
+            module: "release_sign",
+            feature: "sign",
+            enabled: cfg!(feature = "sign"),
+            source: "builtin",
+        },
         // sandbox 特性
-        CapabilityRow { name: "landlock sandbox", module: "sandbox", feature: "sandbox", enabled: cfg!(feature = "sandbox"), source: "builtin" },
+        CapabilityRow {
+            name: "landlock sandbox",
+            module: "sandbox",
+            feature: "sandbox",
+            enabled: cfg!(feature = "sandbox"),
+            source: "builtin",
+        },
         // 运行时门控（非编译特性，取决于 env）
-        CapabilityRow { name: "mcp:* (MCP 客户端)", module: "ext/mcp", feature: "runtime: GANYU_ALLOW_MCP", enabled: std::env::var("GANYU_ALLOW_MCP").as_deref() == Ok("1"), source: "mcp" },
-        CapabilityRow { name: "plugin:* (插件发现)", module: "ext/mod", feature: "runtime: GANYU_ALLOW_PLUGINS", enabled: std::env::var("GANYU_ALLOW_PLUGINS").as_deref() == Ok("1"), source: "plugin" },
+        CapabilityRow {
+            name: "mcp:* (MCP 客户端)",
+            module: "ext/mcp",
+            feature: "runtime: GANYU_ALLOW_MCP",
+            enabled: std::env::var("GANYU_ALLOW_MCP").as_deref() == Ok("1"),
+            source: "mcp",
+        },
+        CapabilityRow {
+            name: "plugin:* (插件发现)",
+            module: "ext/mod",
+            feature: "runtime: GANYU_ALLOW_PLUGINS",
+            enabled: std::env::var("GANYU_ALLOW_PLUGINS").as_deref() == Ok("1"),
+            source: "plugin",
+        },
         // 多平台网关（network 特性 + 运行时配置；L3 生态兼容）
-        CapabilityRow { name: "gateway:telegram", module: "gateway/telegram", feature: "network + [gateway] telegram_token", enabled: cfg!(feature = "network") && ganyu_agent::config::read_gateway_token().is_some(), source: "adapter" },
-        CapabilityRow { name: "gateway:http (Webhook 桥接)", module: "gateway/http_bridge", feature: "network + GANYU_HTTP_BIND", enabled: cfg!(feature = "network") && ganyu_agent::config::read_gateway_http_bind().is_some(), source: "adapter" },
+        CapabilityRow {
+            name: "gateway:telegram",
+            module: "gateway/telegram",
+            feature: "network + [gateway] telegram_token",
+            enabled: cfg!(feature = "network")
+                && ganyu_agent::config::read_gateway_token().is_some(),
+            source: "adapter",
+        },
+        CapabilityRow {
+            name: "gateway:http (Webhook 桥接)",
+            module: "gateway/http_bridge",
+            feature: "network + GANYU_HTTP_BIND",
+            enabled: cfg!(feature = "network")
+                && ganyu_agent::config::read_gateway_http_bind().is_some(),
+            source: "adapter",
+        },
     ]
 }
 
@@ -1188,7 +1372,10 @@ async fn selftest() {
             out.sql.as_str().contains("SELECT") && out.sql.as_str().contains("profit")
         );
     } else {
-        check!("SAG 端到端（需 examples/sample_mdl.json，release 分发跳过）", true);
+        check!(
+            "SAG 端到端（需 examples/sample_mdl.json，release 分发跳过）",
+            true
+        );
     }
 
     // 2b) 会话记忆持久化 + 续接
@@ -1228,7 +1415,10 @@ async fn selftest() {
     let book = Arc::new(SkillBook::new(mem3.clone()));
     register_core_skills(&book);
     for name in book.skill_names() {
-        let desc = book.get_skill(&name).map(|s| s.description.clone()).unwrap_or_default();
+        let desc = book
+            .get_skill(&name)
+            .map(|s| s.description.clone())
+            .unwrap_or_default();
         reg.register(Arc::new(SkillTool::new(
             book.clone(),
             reg.clone(),
@@ -1241,8 +1431,14 @@ async fn selftest() {
     reg.call("file_write", &Value(format!("{sp}\nalpha\nbeta\ngamma")))
         .await
         .unwrap();
-    let sum = reg.call("skill:summarize", &Value(sp.into())).await.unwrap();
-    check!("特性技能 summarize", sum.as_str().contains("摘要") && sum.as_str().contains("3 行"));
+    let sum = reg
+        .call("skill:summarize", &Value(sp.into()))
+        .await
+        .unwrap();
+    check!(
+        "特性技能 summarize",
+        sum.as_str().contains("摘要") && sum.as_str().contains("3 行")
+    );
     let _ = std::fs::remove_file(sp);
 
     // 4) 网关级联 fallback（Fail -> Ok）
@@ -1270,7 +1466,10 @@ async fn selftest() {
     g2.register(Arc::new(FailBackend) as DynBackend);
     g2.register(Arc::new(OkBackend) as DynBackend);
     let r = g2.complete(&[Message::user("hi")]).await;
-    check!("网关级联 fallback", matches!(r, Ok(v) if v.as_str() == "ok"));
+    check!(
+        "网关级联 fallback",
+        matches!(r, Ok(v) if v.as_str() == "ok")
+    );
 
     println!("\nselftest: {pass} passed, {fail} failed");
     let _ = std::fs::remove_file(".ganyu_selftest_mem.json");

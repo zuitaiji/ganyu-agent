@@ -106,7 +106,11 @@ impl Agent {
                     final_answer = Value(text);
                     break;
                 }
-                Decision::Act { tool, args, remaining } => {
+                Decision::Act {
+                    tool,
+                    args,
+                    remaining,
+                } => {
                     self.push(Step::Action {
                         tool: tool.clone(),
                         args: args.clone(),

@@ -48,7 +48,11 @@ impl Mdl {
     pub fn load(path: &str) -> GanyuResult<Self> {
         let s = std::fs::read_to_string(path)?;
         let doc: MdlDoc = serde_json::from_str(&s)?;
-        let models = doc.models.into_iter().map(|m| (m.name.clone(), m)).collect();
+        let models = doc
+            .models
+            .into_iter()
+            .map(|m| (m.name.clone(), m))
+            .collect();
         Ok(Mdl { models })
     }
 
@@ -57,7 +61,11 @@ impl Mdl {
     pub fn load_default() -> GanyuResult<Self> {
         let s = include_str!("../../examples/sample_mdl.json");
         let doc: MdlDoc = serde_json::from_str(s)?;
-        let models = doc.models.into_iter().map(|m| (m.name.clone(), m)).collect();
+        let models = doc
+            .models
+            .into_iter()
+            .map(|m| (m.name.clone(), m))
+            .collect();
         Ok(Mdl { models })
     }
 
@@ -116,7 +124,11 @@ impl Mdl {
         let lower = sql.to_ascii_lowercase();
 
         // 注释/堆叠语句截断
-        if lower.contains("--") || lower.contains("#") || lower.contains("/*") || lower.contains("*/") {
+        if lower.contains("--")
+            || lower.contains("#")
+            || lower.contains("/*")
+            || lower.contains("*/")
+        {
             hits.push("含注释或堆叠语句截断（-- / # / /* */）".into());
         }
         if lower.contains(';') {
@@ -125,9 +137,26 @@ impl Mdl {
 
         // 危险关键字（DML/DDL/系统函数）
         const DANGER: &[&str] = &[
-            "drop", "delete", "update", "insert", "alter", "truncate", "create",
-            "replace", "grant", "revoke", "exec", "execute", "union", "into",
-            "xp_", "sleep", "benchmark", "load_file", "outfile", "information_schema",
+            "drop",
+            "delete",
+            "update",
+            "insert",
+            "alter",
+            "truncate",
+            "create",
+            "replace",
+            "grant",
+            "revoke",
+            "exec",
+            "execute",
+            "union",
+            "into",
+            "xp_",
+            "sleep",
+            "benchmark",
+            "load_file",
+            "outfile",
+            "information_schema",
         ];
         for kw in DANGER {
             // 词边界匹配，避免误伤正常列名（如 `updated_at` 不应触发 `update`）。
@@ -160,7 +189,9 @@ mod tests {
         // 复用 examples 的结构（这里内联最小模型用于单测）。
         let doc = r#"{"models":[{"name":"sales","columns":[{"name":"revenue"},{"name":"cost"}]}]}"#;
         let d: MdlDoc = serde_json::from_str(doc).unwrap();
-        Mdl { models: d.models.into_iter().map(|m| (m.name.clone(), m)).collect() }
+        Mdl {
+            models: d.models.into_iter().map(|m| (m.name.clone(), m)).collect(),
+        }
     }
 
     #[test]
@@ -175,7 +206,9 @@ mod tests {
         let m = sample();
         let (ok, p) = m.validate_sql("SELECT revenue FROM sales; DROP TABLE sales--");
         assert!(!ok);
-        assert!(p.iter().any(|x| x.contains("堆叠") || x.contains("注释") || x.contains("DROP")));
+        assert!(p
+            .iter()
+            .any(|x| x.contains("堆叠") || x.contains("注释") || x.contains("DROP")));
     }
 
     #[test]

@@ -98,7 +98,9 @@ async fn agent_run_multistep_trace() {
     let (agent, mem) = build_agent();
     // 多步脚本：写文件 + 算术；轨迹应含 2 个 Action。
     let out = agent
-        .run(&Value("@file_write .ganyu_it_run.txt\nhello\n@calc 2+2".into()))
+        .run(&Value(
+            "@file_write .ganyu_it_run.txt\nhello\n@calc 2+2".into(),
+        ))
         .await
         .unwrap();
     let steps = agent.trace();
@@ -108,7 +110,10 @@ async fn agent_run_multistep_trace() {
         .count();
     assert!(actions >= 2, "expected >=2 actions, got {actions}");
     // 末步为 Final（含遗留文本兜底）。
-    assert!(matches!(steps.last(), Some(ganyu_agent::core::Step::Final(_))));
+    assert!(matches!(
+        steps.last(),
+        Some(ganyu_agent::core::Step::Final(_))
+    ));
     assert!(!out.as_str().is_empty());
     let _ = std::fs::remove_file(mem);
     let _ = std::fs::remove_file(".ganyu_it_run.txt");

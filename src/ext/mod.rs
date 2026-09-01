@@ -89,7 +89,10 @@ impl ToolRegistry {
     }
 
     pub fn register(&self, tool: DynTool) {
-        self.tools.lock().unwrap().insert(tool.name().to_string(), tool);
+        self.tools
+            .lock()
+            .unwrap()
+            .insert(tool.name().to_string(), tool);
     }
 
     /// 调用工具。自愈：失败自动重试（指数退避）。
@@ -133,7 +136,11 @@ impl ToolRegistry {
                 .map_err(|e| GanyuError::ToolFailed(name.to_string(), format!("{e:?}")))
         };
         let ms = start.elapsed().as_millis() as u64;
-        self.audit_evt(AuditEvent::ToolCall { tool: name, ok: result.is_ok(), ms });
+        self.audit_evt(AuditEvent::ToolCall {
+            tool: name,
+            ok: result.is_ok(),
+            ms,
+        });
         if let Err(GanyuError::Forbidden(reason)) = &result {
             self.audit_evt(AuditEvent::SecurityDenial {
                 kind: "tool_forbidden",
@@ -142,7 +149,12 @@ impl ToolRegistry {
         }
 
         if let (Ok(v), Some(k)) = (&result, &key) {
-            self.cache.lock().unwrap().as_ref().unwrap().put(*k, v.clone());
+            self.cache
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .put(*k, v.clone());
         }
         result
     }
@@ -239,9 +251,9 @@ impl Tool for CommandTool {
         true
     }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
+        use std::process::Stdio;
         use tokio::io::AsyncWriteExt;
         use tokio::process::Command;
-        use std::process::Stdio;
 
         // 命令可带参数：按空白拆分为 program + args。
         let mut parts = self.command.split_whitespace();
@@ -265,13 +277,11 @@ impl Tool for CommandTool {
             });
         }
         // 超时等待，防插件命令卡死挂线程（30s）。
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            child.wait_with_output(),
-        )
-        .await
-        .map_err(|_| GanyuError::Plugin(format!("{} 执行超时（30s 上限）", self.command)))?
-        .map_err(|e| GanyuError::Plugin(e.to_string()))?;
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(30), child.wait_with_output())
+                .await
+                .map_err(|_| GanyuError::Plugin(format!("{} 执行超时（30s 上限）", self.command)))?
+                .map_err(|e| GanyuError::Plugin(e.to_string()))?;
         if !output.status.success() {
             return Err(GanyuError::Plugin(format!(
                 "{} exit {}: {}",
@@ -284,7 +294,10 @@ impl Tool for CommandTool {
         let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
         const MAX_OUT: usize = 1024 * 1024;
         let text = if s.chars().count() > MAX_OUT {
-            format!("{}…[已截断：输出超过 1MB 上限]", s.chars().take(MAX_OUT).collect::<String>())
+            format!(
+                "{}…[已截断：输出超过 1MB 上限]",
+                s.chars().take(MAX_OUT).collect::<String>()
+            )
         } else {
             s
         };
@@ -321,15 +334,15 @@ impl SkillBook {
     }
 
     pub async fn lookup(&self, intent: &str) -> GanyuResult<Vec<MemoryHit>> {
-        self.memory.search(intent, "viking://agent/memory/cases").await
+        self.memory
+            .search(intent, "viking://agent/memory/cases")
+            .await
     }
 
     /// 自愈：失败踪迹沉淀，供下次规避。
     pub async fn heal_from_failure(&self, intent: &str, error: &str) -> GanyuResult<()> {
         let uri = format!("viking://agent/memory/failures/{}", slug(intent));
-        let payload = Value(
-            serde_json::json!({ "intent": intent, "error": error }).to_string(),
-        );
+        let payload = Value(serde_json::json!({ "intent": intent, "error": error }).to_string());
         self.memory.put(&uri, &payload).await
     }
 
@@ -351,7 +364,12 @@ impl SkillBook {
     }
 
     pub fn skill_names(&self) -> Vec<String> {
-        self.skills.lock().unwrap().iter().map(|s| s.name.clone()).collect()
+        self.skills
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect()
     }
 
     pub fn skill_specs(&self) -> Vec<String> {
@@ -425,16 +443,27 @@ fn is_safe_program(prog: &str) -> bool {
     let lower = prog.to_lowercase();
     if matches!(
         lower.as_str(),
-        "sh" | "bash" | "cmd" | "powershell" | "pwsh" | "zsh" | "fish"
-            | "sh.exe" | "bash.exe" | "cmd.exe" | "powershell.exe" | "pwsh.exe"
-            | "zsh.exe" | "fish.exe"
+        "sh" | "bash"
+            | "cmd"
+            | "powershell"
+            | "pwsh"
+            | "zsh"
+            | "fish"
+            | "sh.exe"
+            | "bash.exe"
+            | "cmd.exe"
+            | "powershell.exe"
+            | "pwsh.exe"
+            | "zsh.exe"
+            | "fish.exe"
     ) {
         return false;
     }
     if prog.starts_with('/') || prog.starts_with('\\') || prog.contains(':') {
         return false; // 拒绝绝对路径 / 盘符
     }
-    prog.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '/' || c == '-')
+    prog.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '/' || c == '-')
 }
 
 /// 声明宏：把闭包注册为工具。`body` 类型为 `Fn(&Value) -> GanyuResult<Value>`。
@@ -451,7 +480,10 @@ macro_rules! tool {
             fn description(&self) -> &str {
                 $desc
             }
-            async fn invoke(&self, input: &$crate::value::Value) -> $crate::error::GanyuResult<$crate::value::Value> {
+            async fn invoke(
+                &self,
+                input: &$crate::value::Value,
+            ) -> $crate::error::GanyuResult<$crate::value::Value> {
                 ($body)(input)
             }
         }
@@ -479,7 +511,10 @@ mod tests {
             description: "摘要".into(),
             steps: vec![],
         });
-        assert_eq!(book.match_intent("帮我总结一下"), Some("summarize".to_string()));
+        assert_eq!(
+            book.match_intent("帮我总结一下"),
+            Some("summarize".to_string())
+        );
         assert_eq!(book.match_intent("今天天气"), None);
         let _ = std::fs::remove_file(".ganyu_skillbook_test_mem.json");
     }
@@ -550,8 +585,12 @@ mod tests {
         }
         #[async_trait]
         impl Tool for Counting {
-            fn name(&self) -> &str { "counting" }
-            fn description(&self) -> &str { "计数回显（只读，可缓存）" }
+            fn name(&self) -> &str {
+                "counting"
+            }
+            fn description(&self) -> &str {
+                "计数回显（只读，可缓存）"
+            }
             async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
                 self.n.fetch_add(1, Ordering::SeqCst);
                 Ok(input.clone())
@@ -580,9 +619,15 @@ mod tests {
         }
         #[async_trait]
         impl Tool for Sink {
-            fn name(&self) -> &str { "sink" }
-            fn description(&self) -> &str { "副作用写工具（测试）" }
-            fn side_effecting(&self) -> bool { true }
+            fn name(&self) -> &str {
+                "sink"
+            }
+            fn description(&self) -> &str {
+                "副作用写工具（测试）"
+            }
+            fn side_effecting(&self) -> bool {
+                true
+            }
             async fn invoke(&self, _: &Value) -> GanyuResult<Value> {
                 self.n.fetch_add(1, Ordering::SeqCst);
                 Ok(Value("done".into()))

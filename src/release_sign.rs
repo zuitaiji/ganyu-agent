@@ -43,7 +43,7 @@ fn verify_msg(pubkey: &[u8; 32], msg: &[u8], sig: &[u8]) -> bool {
 
 /// 安全读取 32 字节种子（64 hex），来自 `--key` 或环境变量。
 #[cfg(feature = "sign")]
-fn load_seed(arg_key: Option<  &str>) -> GanyuResult<[u8; 32]> {
+fn load_seed(arg_key: Option<&str>) -> GanyuResult<[u8; 32]> {
     let raw = arg_key
         .or_else(|| std::env::var("GANYU_UPDATE_SIGN_KEY").ok())
         .map(|s| s.trim().to_string())
@@ -59,7 +59,8 @@ fn load_seed(arg_key: Option<  &str>) -> GanyuResult<[u8; 32]> {
             raw.len()
         )));
     }
-    let bytes = decode_hex(&raw).ok_or_else(|| GanyuError::Forbidden("种子含非 hex 字符（只能 0-9a-f）".into()))?;
+    let bytes = decode_hex(&raw)
+        .ok_or_else(|| GanyuError::Forbidden("种子含非 hex 字符（只能 0-9a-f）".into()))?;
     if bytes.len() != 32 {
         return Err(GanyuError::Forbidden("种子解码后非 32 字节".into()));
     }
@@ -93,8 +94,18 @@ fn keypair_gen() -> GanyuResult<()> {
     let mut out = std::io::stdout();
     out.write_all("# --- 密钥对（仅生成一次，seed 仅存 CI secret）---\n".as_bytes())
         .ok();
-    writeln!(out, "GANYU_UPDATE_SIGN_KEY={}   # 机密：仅存 CI secret，勿提交", hex(&seed)).ok();
-    writeln!(out, "GANYU_UPDATE_PUBKEY ={}    # 公开：写入文档与用户环境", hex(&pubkey)).ok();
+    writeln!(
+        out,
+        "GANYU_UPDATE_SIGN_KEY={}   # 机密：仅存 CI secret，勿提交",
+        hex(&seed)
+    )
+    .ok();
+    writeln!(
+        out,
+        "GANYU_UPDATE_PUBKEY ={}    # 公开：写入文档与用户环境",
+        hex(&pubkey)
+    )
+    .ok();
     Ok(())
 }
 
@@ -119,7 +130,9 @@ fn cmd_sign(key: Option<&str>, file: Option<&str>) -> GanyuResult<()> {
     // 签名后随即用同一公钥自验（捕获密钥/编码错误，fail-closed）。
     let pubkey = pub_from_seed(&seed);
     if !verify_msg(&pubkey, &msg, &sig) {
-        return Err(GanyuError::Forbidden("自验失败：签名后立即复核未通过，拒绝产出".into()));
+        return Err(GanyuError::Forbidden(
+            "自验失败：签名后立即复核未通过，拒绝产出".into(),
+        ));
     }
     println!("已签名: {sig_path} ({} 字节)", sig.len());
     Ok(())
@@ -128,8 +141,10 @@ fn cmd_sign(key: Option<&str>, file: Option<&str>) -> GanyuResult<()> {
 #[cfg(feature = "sign")]
 fn cmd_verify(file: Option<&str>, pub_hex: Option<&str>) -> GanyuResult<()> {
     let file = file.ok_or_else(|| GanyuError::Forbidden("verify 需要 <file> 参数".into()))?;
-    let pub_hex = pub_hex.ok_or_else(|| GanyuError::Forbidden("verify 需要 <pub-hex> 参数".into()))?;
-    let pubkey = decode_hex(pub_hex).ok_or_else(|| GanyuError::Forbidden("公钥 hex 非法".into()))?;
+    let pub_hex =
+        pub_hex.ok_or_else(|| GanyuError::Forbidden("verify 需要 <pub-hex> 参数".into()))?;
+    let pubkey =
+        decode_hex(pub_hex).ok_or_else(|| GanyuError::Forbidden("公钥 hex 非法".into()))?;
     if pubkey.len() != 32 {
         return Err(GanyuError::Forbidden("公钥必须为 32 字节".into()));
     }
@@ -150,11 +165,16 @@ fn cmd_verify(file: Option<&str>, pub_hex: Option<&str>) -> GanyuResult<()> {
 
 #[cfg(feature = "sign")]
 fn cmd_seed_check(seed_hex: Option<&str>) -> GanyuResult<()> {
-    let seed_hex = seed_hex.ok_or_else(|| GanyuError::Forbidden("seed-check 需要 <64hex种子>".into()))?;
+    let seed_hex =
+        seed_hex.ok_or_else(|| GanyuError::Forbidden("seed-check 需要 <64hex种子>".into()))?;
     if seed_hex.len() != 64 {
-        return Err(GanyuError::Forbidden(format!("种子长度 {} ≠ 64", seed_hex.len())));
+        return Err(GanyuError::Forbidden(format!(
+            "种子长度 {} ≠ 64",
+            seed_hex.len()
+        )));
     }
-    let bytes = decode_hex(seed_hex).ok_or_else(|| GanyuError::Forbidden("种子含非 hex 字符".into()))?;
+    let bytes =
+        decode_hex(seed_hex).ok_or_else(|| GanyuError::Forbidden("种子含非 hex 字符".into()))?;
     if bytes.len() != 32 {
         return Err(GanyuError::Forbidden("种子非 32 字节".into()));
     }
@@ -171,7 +191,11 @@ fn cmd_seed_check(seed_hex: Option<&str>) -> GanyuResult<()> {
     } else {
         println!("→ 不是 2026-08-18 轮换的那对密钥（旧种子/记错/泄露作废的演示种子）");
     }
-    if match_prod { Ok(()) } else { Err(GanyuError::Forbidden("种子与生产公钥不匹配".into())) }
+    if match_prod {
+        Ok(())
+    } else {
+        Err(GanyuError::Forbidden("种子与生产公钥不匹配".into()))
+    }
 }
 
 /// 入口：处理 `ganyu release <subcommand> ...`。
@@ -193,8 +217,14 @@ pub fn run_release(args: &[String]) -> GanyuResult<()> {
     match sub {
         "gen" => keypair_gen(),
         "pub" => cmd_pub(rest.first().map(|s| s.as_str())),
-        "sign" => cmd_sign(rest.first().map(|s| s.as_str()), rest.get(1).map(|s| s.as_str())),
-        "verify" => cmd_verify(rest.first().map(|s| s.as_str()), rest.get(1).map(|s| s.as_str())),
+        "sign" => cmd_sign(
+            rest.first().map(|s| s.as_str()),
+            rest.get(1).map(|s| s.as_str()),
+        ),
+        "verify" => cmd_verify(
+            rest.first().map(|s| s.as_str()),
+            rest.get(1).map(|s| s.as_str()),
+        ),
         "seed-check" => cmd_seed_check(rest.first().map(|s| s.as_str())),
         other => Err(GanyuError::Forbidden(format!(
             "未知 release 子命令：{other}（可用 gen/pub/sign/verify/seed-check）"

@@ -12,18 +12,15 @@
 
 #[cfg(all(feature = "sandbox", target_os = "linux"))]
 pub fn apply_fs_sandbox(root: &std::path::Path) -> std::io::Result<()> {
-    use landlock::{ABI, AccessFs, PathBeneath, PathFd, Ruleset};
+    use landlock::{AccessFs, PathBeneath, PathFd, Ruleset, ABI};
 
-    let root_canon = std::fs::canonicalize(root)
-        .or_else(|_| {
-            std::fs::create_dir_all(root)?;
-            std::fs::canonicalize(root)
-        })?;
+    let root_canon = std::fs::canonicalize(root).or_else(|_| {
+        std::fs::create_dir_all(root)?;
+        std::fs::canonicalize(root)
+    })?;
 
     // 子进程需要的最小只读/执行路径（运行解释器与动态链接库）。
-    let read_exec: &[&str] = &[
-        "/usr", "/lib", "/lib64", "/bin", "/etc", "/proc", "/dev",
-    ];
+    let read_exec: &[&str] = &["/usr", "/lib", "/lib64", "/bin", "/etc", "/proc", "/dev"];
 
     let mut ruleset = Ruleset::new(ABI::V1)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}")))?;
@@ -31,9 +28,8 @@ pub fn apply_fs_sandbox(root: &std::path::Path) -> std::io::Result<()> {
     // 沙箱根：读写（允许子进程在沙箱内产出）。
     ruleset = ruleset
         .add_rule(PathBeneath::new(
-            PathFd::new(&root_canon).map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}"))
-            })?,
+            PathFd::new(&root_canon)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}")))?,
             AccessFs::from_write(true),
         )?)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}")))?;

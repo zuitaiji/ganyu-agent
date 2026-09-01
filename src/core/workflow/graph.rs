@@ -44,11 +44,7 @@ impl GraphWorkflow {
 
     /// 拓扑序（Kahn）。若有环返回错误。
     fn topo_order(&self) -> GanyuResult<Vec<String>> {
-        let mut indeg: HashMap<String, usize> = self
-            .nodes
-            .keys()
-            .map(|k| (k.clone(), 0))
-            .collect();
+        let mut indeg: HashMap<String, usize> = self.nodes.keys().map(|k| (k.clone(), 0)).collect();
         for (_, to) in &self.edges {
             *indeg.entry(to.clone()).or_insert(0) += 1;
         }
@@ -100,7 +96,13 @@ impl Workflow for GraphWorkflow {
             let node_input: Value = match collected.len() {
                 0 => input.clone(), // 入口节点
                 1 => collected.into_iter().next().unwrap(),
-                _ => Value(collected.iter().map(|v| v.as_str()).collect::<Vec<_>>().join("\n")),
+                _ => Value(
+                    collected
+                        .iter()
+                        .map(|v| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
             };
 
             let out = match self.nodes.get(id).unwrap() {
@@ -109,10 +111,9 @@ impl Workflow for GraphWorkflow {
             };
             outputs.insert(id.clone(), out);
         }
-        outputs
-            .get(&self.end)
-            .cloned()
-            .ok_or_else(|| crate::error::GanyuError::Workflow(format!("end 节点缺失：{}", self.end)))
+        outputs.get(&self.end).cloned().ok_or_else(|| {
+            crate::error::GanyuError::Workflow(format!("end 节点缺失：{}", self.end))
+        })
     }
 }
 
@@ -140,7 +141,8 @@ impl GraphBuilder {
     }
 
     pub fn literal(mut self, id: &str, text: &str) -> Self {
-        self.nodes.insert(id.to_string(), Node::Literal(Value(text.into())));
+        self.nodes
+            .insert(id.to_string(), Node::Literal(Value(text.into())));
         self
     }
 
@@ -159,7 +161,10 @@ impl GraphBuilder {
             return Err(GanyuError::Workflow("未指定 end 节点".into()));
         }
         if !self.nodes.contains_key(&self.end) {
-            return Err(GanyuError::Workflow(format!("end 节点不存在：{}", self.end)));
+            return Err(GanyuError::Workflow(format!(
+                "end 节点不存在：{}",
+                self.end
+            )));
         }
         // 构造即校验：有环或存在孤立/不可达节点则拒绝。
         self.validate()?;
@@ -172,8 +177,7 @@ impl GraphBuilder {
 
     /// Kahn 入度检查：边指向缺失节点 / 成环 / 不可达 均报错。
     fn validate(&self) -> GanyuResult<()> {
-        let mut indeg: HashMap<&String, usize> =
-            self.nodes.keys().map(|k| (k, 0)).collect();
+        let mut indeg: HashMap<&String, usize> = self.nodes.keys().map(|k| (k, 0)).collect();
         for (_, to) in &self.edges {
             if let Some(d) = indeg.get_mut(to) {
                 *d += 1;

@@ -7,9 +7,9 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::error::GanyuResult;
 #[cfg(feature = "network")]
 use crate::error::GanyuError;
+use crate::error::GanyuResult;
 use crate::value::Value;
 
 /// API 密钥类型。默认 `String`；开启 `secret` 特性后改为 `zeroize::Zeroizing<String>`，
@@ -48,13 +48,22 @@ pub struct Message {
 
 impl Message {
     pub fn system(content: impl Into<Value>) -> Self {
-        Message { role: Role::System, content: content.into() }
+        Message {
+            role: Role::System,
+            content: content.into(),
+        }
     }
     pub fn user(content: impl Into<Value>) -> Self {
-        Message { role: Role::User, content: content.into() }
+        Message {
+            role: Role::User,
+            content: content.into(),
+        }
     }
     pub fn assistant(content: impl Into<Value>) -> Self {
-        Message { role: Role::Assistant, content: content.into() }
+        Message {
+            role: Role::Assistant,
+            content: content.into(),
+        }
     }
 }
 
@@ -83,10 +92,7 @@ impl LlmBackend for LocalBackend {
         true
     }
     async fn complete(&self, messages: &[Message]) -> GanyuResult<Value> {
-        let user = messages
-            .last()
-            .map(|m| m.content.as_str())
-            .unwrap_or("");
+        let user = messages.last().map(|m| m.content.as_str()).unwrap_or("");
         let preview: String = user.chars().take(60).collect();
         Ok(Value(format!(
             "[本地兜底] 收到：{preview}（未配置联网模型端点；设置 OPENAI_API_BASE/OPENAI_API_KEY 并以 --features network 编译即可升级）"

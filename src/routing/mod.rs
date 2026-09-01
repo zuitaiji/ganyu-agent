@@ -119,7 +119,9 @@ impl Gateway {
         // M2：速率限制
         if let Some(rl) = self.rate.lock().unwrap().as_ref() {
             if !rl.try_acquire() {
-                self.audit_evt(AuditEvent::RateLimited { reason: "网关请求超过速率上限" });
+                self.audit_evt(AuditEvent::RateLimited {
+                    reason: "网关请求超过速率上限",
+                });
                 return Err(GanyuError::RateLimited("网关请求超过速率上限".into()));
             }
         }
@@ -144,11 +146,7 @@ impl Gateway {
         let mut last_err: Option<GanyuError> = None;
         let mut attempted: Vec<String> = Vec::new();
         for name in names {
-            let backend = backends
-                .iter()
-                .find(|b| b.name() == name)
-                .cloned()
-                .unwrap();
+            let backend = backends.iter().find(|b| b.name() == name).cloned().unwrap();
             {
                 let br = self.breakers.lock().unwrap();
                 if !br.get(&name).unwrap().allow() {
@@ -185,7 +183,10 @@ impl Gateway {
                         .unwrap()
                         .record_failure();
                     if let Some(prev) = attempted.last() {
-                        self.audit_evt(AuditEvent::GatewayFallback { from: prev, to: &name });
+                        self.audit_evt(AuditEvent::GatewayFallback {
+                            from: prev,
+                            to: &name,
+                        });
                     }
                     attempted.push(name);
                     last_err = Some(e);
@@ -251,7 +252,9 @@ mod tests {
     struct FailBackend;
     #[async_trait]
     impl LlmBackend for FailBackend {
-        fn name(&self) -> &str { "fail" }
+        fn name(&self) -> &str {
+            "fail"
+        }
         async fn complete(&self, _: &[Message]) -> GanyuResult<Value> {
             Err(GanyuError::BackendUnavailable("fail".into()))
         }
@@ -259,7 +262,9 @@ mod tests {
     struct OkBackend;
     #[async_trait]
     impl LlmBackend for OkBackend {
-        fn name(&self) -> &str { "ok" }
+        fn name(&self) -> &str {
+            "ok"
+        }
         async fn complete(&self, _: &[Message]) -> GanyuResult<Value> {
             Ok(Value("ok".into()))
         }
@@ -295,10 +300,11 @@ mod tests {
     }
     #[async_trait]
     impl LlmBackend for CountingBackend {
-        fn name(&self) -> &str { "count" }
+        fn name(&self) -> &str {
+            "count"
+        }
         async fn complete(&self, _: &[Message]) -> GanyuResult<Value> {
-            self.n
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(Value("ok".into()))
         }
     }
@@ -312,6 +318,10 @@ mod tests {
         let r1 = g.complete(&[Message::user("hi")]).await.unwrap();
         let r2 = g.complete(&[Message::user("hi")]).await.unwrap();
         assert_eq!(r1, r2);
-        assert_eq!(n.load(std::sync::atomic::Ordering::SeqCst), 1, "第二次应命中 LLM 缓存");
+        assert_eq!(
+            n.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "第二次应命中 LLM 缓存"
+        );
     }
 }

@@ -126,7 +126,10 @@ fn parse_intent(query: &str) -> Intent {
     } else {
         Metric::Profit
     };
-    let region = ZONES.iter().find(|(zh, _)| query.contains(*zh)).map(|(_, z)| z.to_string());
+    let region = ZONES
+        .iter()
+        .find(|(zh, _)| query.contains(*zh))
+        .map(|(_, z)| z.to_string());
     let top_n = capture_usize(r"(?:前|top)?\s*(\d+)\s*个", query).unwrap_or(3);
     let period = if regex_contains(r"(?i)上月|上个月|last month", query) {
         Some(Period::LastMonth)
@@ -153,25 +156,22 @@ fn template_sql(intent: &Intent) -> String {
         conds.push(format!("r.zone = '{z}'"));
     }
     if intent.period == Some(Period::LastMonth) {
-        conds.push("s.period >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')".to_string());
+        conds
+            .push("s.period >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')".to_string());
     }
     if !conds.is_empty() {
         sql.push_str(&format!("WHERE {}\n", conds.join(" AND ")));
     }
-    sql.push_str(&format!("GROUP BY p.name\nORDER BY {alias} DESC\nLIMIT {}", intent.top_n));
+    sql.push_str(&format!(
+        "GROUP BY p.name\nORDER BY {alias} DESC\nLIMIT {}",
+        intent.top_n
+    ));
     sql
 }
 
 /// 执行步骤（演示用 mock 结果；接真实库时替换此函数）。
 fn execute_mock() -> Value {
-    Value(
-        serde_json::json!([
-            ["产品A", 123456],
-            ["产品B", 98765],
-            ["产品C", 87654]
-        ])
-        .to_string(),
-    )
+    Value(serde_json::json!([["产品A", 123456], ["产品B", 98765], ["产品C", 87654]]).to_string())
 }
 
 impl SagPipeline {
@@ -230,7 +230,9 @@ impl SagPipeline {
                 .await?;
         } else if verdict == Verdict::Pass {
             if let Some(r) = &result {
-                self.skills.capture(query.as_str(), "sag_top3_profit", r).await?;
+                self.skills
+                    .capture(query.as_str(), "sag_top3_profit", r)
+                    .await?;
             }
         }
 
@@ -245,6 +247,10 @@ impl SagPipeline {
         );
         self.memory.commit(&self.session, &trace).await?;
 
-        Ok(SagOutput { sql: Value(sql), result, verdict })
+        Ok(SagOutput {
+            sql: Value(sql),
+            result,
+            verdict,
+        })
     }
 }

@@ -252,7 +252,7 @@ impl Cipher {
     }
 
     fn encrypt(&self, plaintext: &str) -> String {
-        use aes_gcm::aead::{Aead, KeyInit, generic_array::GenericArray};
+        use aes_gcm::aead::{generic_array::GenericArray, Aead, KeyInit};
         use aes_gcm::Aes256Gcm;
         use rand::RngCore;
 
@@ -298,7 +298,7 @@ impl Cipher {
 
 #[cfg(feature = "crypto")]
 fn aes_gcm_decrypt(key: &[u8; 32], nonce: &[u8], ct: &[u8]) -> Option<String> {
-    use aes_gcm::aead::{Aead, KeyInit, generic_array::GenericArray};
+    use aes_gcm::aead::{generic_array::GenericArray, Aead, KeyInit};
     use aes_gcm::Aes256Gcm;
     let cipher = Aes256Gcm::new(GenericArray::from_slice(key));
     let pt = cipher.decrypt(GenericArray::from_slice(nonce), ct).ok()?;
@@ -437,12 +437,7 @@ impl OpenVikingMemory {
         Ok(Some(Value(content)))
     }
 
-    async fn http_search(
-        &self,
-        base: &str,
-        query: &str,
-        uri: &str,
-    ) -> GanyuResult<Vec<MemoryHit>> {
+    async fn http_search(&self, base: &str, query: &str, uri: &str) -> GanyuResult<Vec<MemoryHit>> {
         let resp = self
             .client()
             .await
@@ -470,13 +465,13 @@ mod tests {
     #[tokio::test]
     async fn put_get_search() {
         let m = LocalMemory::new(".ganyu_test_mem.json");
-        m.put("viking://agent/memory/cases/profit", &Value("华东利润Top3-成功".into()))
-            .await
-            .unwrap();
-        let got = m
-            .get("viking://agent/memory/cases/profit")
-            .await
-            .unwrap();
+        m.put(
+            "viking://agent/memory/cases/profit",
+            &Value("华东利润Top3-成功".into()),
+        )
+        .await
+        .unwrap();
+        let got = m.get("viking://agent/memory/cases/profit").await.unwrap();
         assert_eq!(got, Some(Value("华东利润Top3-成功".into())));
         let hits = m.search("利润", "viking://").await.unwrap();
         assert!(!hits.is_empty());
@@ -540,8 +535,14 @@ mod tests {
         }
         // 直接读盘，确认是密文（含 ENC1: 前缀），明文不应泄露。
         let raw = std::fs::read_to_string(path).unwrap();
-        assert!(raw.starts_with("ENC2:"), "expected ciphertext (ENC2) on disk");
-        assert!(!raw.contains("topsecret"), "plaintext must not leak to disk");
+        assert!(
+            raw.starts_with("ENC2:"),
+            "expected ciphertext (ENC2) on disk"
+        );
+        assert!(
+            !raw.contains("topsecret"),
+            "plaintext must not leak to disk"
+        );
         // 重新打开（同密钥）能还原。
         let m2 = LocalMemory::new(path);
         let got = m2.get("viking://secret").await.unwrap();
@@ -596,7 +597,7 @@ mod tests {
         let _ = std::fs::remove_file(path);
 
         // 用旧方案手动构造一条 ENC1 密文。
-        use aes_gcm::aead::{Aead, KeyInit, generic_array::GenericArray};
+        use aes_gcm::aead::{generic_array::GenericArray, Aead, KeyInit};
         use aes_gcm::Aes256Gcm;
         use rand::RngCore;
         use sha2::{Digest, Sha256};

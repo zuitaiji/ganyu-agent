@@ -1,0 +1,72 @@
+# ganyu-agent 持续集成门禁：PR + push main 触发（验证前置）。
+#
+# 存在理由：`release.yml` 仅在 tag 推送时运行，导致问题在发布阶段才暴露——
+# v0.1.16 首发的 `Cargo.lock` 缺 axum 依赖树事故即为此代价（本地通过、发布失败）。
+# 本工作流把格式 / lint / 测试 / 带 --locked 的构建前置到开发阶段，
+# 使「发布」只承担打包分发职责，而不承担首次发现问题的职责。
+#
+# 与 release.yml 的分工：
+#   ci.yml      —— 每次 PR / push main：质量门禁（快反馈）
+#   release.yml —— tag 推送：三平台构建 + 签名 + 发布（权威交付）
+
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch: # 手动触发（调试用）
+
+permissions:
+  contents: read
+
+# 同一分支/PR 的旧运行自动取消，避免排队浪费 CI 配额。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: fmt / clippy / test / build(--locked)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust (rustfmt + clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # 项目级 .cargo/config.toml 启用了 rustc-wrapper=sccache，
+      # runner 需先安装 sccache，否则 cargo 因找不到 wrapper 而失败（同 release.yml）。
+      - name: Install sccache
+        run: cargo install sccache --locked
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # 格式门禁：统一风格，避免评审被格式噪音干扰。
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      # Lint 报告（当前为「只报告不阻断」）：
+      # 存量告警 23 处（doc_lazy_continuation / redundant_closure / manual_is_multiple_of 等），
+      # 均属机械可修的低风险项，但分布在 9 个与本次改动无关的文件中。
+      # 为避免门禁上线即全红、也避免为过门禁而大范围改动无关代码，先以报告模式运行；
+      # 待专项清理这 23 处后，追加 `-D warnings` 转为阻断门禁。
+      - name: Clippy (report-only)
+        run: cargo clippy --all-targets --features hardened
+
+      - name: Test
+        run: cargo test --features hardened
+
+      # 关键：镜像 release.yml 的构建命令（含 --locked）。
+      # 若有依赖变更未同步 Cargo.lock，此处立即失败，而非等到 tag 发布。
+      - name: Build (release, --locked)
+        run: cargo build --release --features hardened --locked

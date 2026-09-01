@@ -26,7 +26,10 @@ pub fn restrict_file_permissions(path: impl AsRef<Path>) -> bool {
                 std::fs::set_permissions(path, perms).is_ok()
             }
             Err(e) => {
-                eprintln!("[warn] 无法读取文件权限，跳过收紧: {} ({e})", path.display());
+                eprintln!(
+                    "[warn] 无法读取文件权限，跳过收紧: {} ({e})",
+                    path.display()
+                );
                 false
             }
         }
@@ -34,7 +37,10 @@ pub fn restrict_file_permissions(path: impl AsRef<Path>) -> bool {
     #[cfg(windows)]
     {
         let Ok(username) = std::env::var("USERNAME") else {
-            eprintln!("[warn] 无法读取 USERNAME，跳过文件权限收紧: {}", path.display());
+            eprintln!(
+                "[warn] 无法读取 USERNAME，跳过文件权限收紧: {}",
+                path.display()
+            );
             return false;
         };
         match std::process::Command::new("icacls")
@@ -107,9 +113,7 @@ pub fn resolve_sandboxed(input: &str) -> GanyuResult<PathBuf> {
     for comp in p.components() {
         match comp {
             Component::ParentDir => {
-                return Err(GanyuError::Forbidden(format!(
-                    "拒绝目录穿越（..）：{raw}"
-                )));
+                return Err(GanyuError::Forbidden(format!("拒绝目录穿越（..）：{raw}")));
             }
             Component::RootDir => {
                 return Err(GanyuError::Forbidden(format!("拒绝绝对路径：{raw}")));
@@ -182,18 +186,18 @@ pub fn ssrf_guard_resolve(url: &str) -> GanyuResult<(String, Vec<IpAddr>)> {
     let (scheme, rest) = match url.split_once("://") {
         Some((s, r)) => (s.to_ascii_lowercase(), r),
         None => {
-            return Err(GanyuError::Ssrf(format!("缺少协议（仅允许 http/https）：{url}")));
+            return Err(GanyuError::Ssrf(format!(
+                "缺少协议（仅允许 http/https）：{url}"
+            )));
         }
     };
     if scheme != "http" && scheme != "https" {
-        return Err(GanyuError::Ssrf(format!("拒绝协议 {scheme}（仅 http/https）")));
+        return Err(GanyuError::Ssrf(format!(
+            "拒绝协议 {scheme}（仅 http/https）"
+        )));
     }
     // 取主机部分（到 / ? # 为止），去掉可选方括号与端口。
-    let authority = rest
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or("")
-        .trim();
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("").trim();
     if authority.is_empty() {
         return Err(GanyuError::Ssrf("空主机".into()));
     }
@@ -427,9 +431,7 @@ fn is_private_v4(a: std::net::Ipv4Addr) -> bool {
 /// 把不可信外部数据（工具输出 / 其它 agent 产出 / 历史轨迹）包裹成显式边界，
 /// 提示下游模型或流程将其视为“数据”而非“指令”，缓解提示注入（F-06）。
 pub fn fence_untrusted(label: &str, content: &str) -> String {
-    format!(
-        "<<<BEGIN_UNTRUSTED_DATA[{label}]>>>\n{content}\n<<<END_UNTRUSTED_DATA[{label}]>>>"
-    )
+    format!("<<<BEGIN_UNTRUSTED_DATA[{label}]>>>\n{content}\n<<<END_UNTRUSTED_DATA[{label}]>>>")
 }
 
 /// 把十六进制字符串解码为字节（用于 ed25519 公钥/签名的解析，R-1）。
@@ -536,7 +538,10 @@ mod tests {
 
     #[test]
     fn decode_hex_roundtrip() {
-        assert_eq!(decode_hex("deadBEEF").unwrap(), vec![0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(
+            decode_hex("deadBEEF").unwrap(),
+            vec![0xde, 0xad, 0xbe, 0xef]
+        );
         assert!(decode_hex("xyz").is_none());
         assert!(decode_hex("abc").is_none()); // 奇数长度
     }
@@ -544,8 +549,8 @@ mod tests {
     #[test]
     fn restrict_file_permissions_tightens() {
         use std::io::Write;
-        let p = std::env::temp_dir()
-            .join(format!("ganyu_restrict_test_{}.tmp", std::process::id()));
+        let p =
+            std::env::temp_dir().join(format!("ganyu_restrict_test_{}.tmp", std::process::id()));
         {
             let mut f = std::fs::File::create(&p).expect("create temp");
             f.write_all(b"secret").expect("write temp");

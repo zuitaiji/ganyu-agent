@@ -185,13 +185,14 @@ impl Tool for ExecTool {
         true
     }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
-        use tokio::process::Command;
         use std::process::Stdio;
+        use tokio::process::Command;
 
         // C1 失败闭环：即使 `shell` 特性已编译，运行时仍需显式开启才放行。
         if !security::shell_allowed() {
             return Err(GanyuError::Forbidden(
-                "exec 已禁用（默认关闭；需 shell 特性编译且设置 GANYU_ALLOW_SHELL=1 才放行）".into(),
+                "exec 已禁用（默认关闭；需 shell 特性编译且设置 GANYU_ALLOW_SHELL=1 才放行）"
+                    .into(),
             ));
         }
 
@@ -202,7 +203,8 @@ impl Tool for ExecTool {
             ("sh", "-c")
         };
         let mut cmd = Command::new(prog);
-        cmd.arg(flag).arg(cmd_str)
+        cmd.arg(flag)
+            .arg(cmd_str)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -219,20 +221,21 @@ impl Tool for ExecTool {
             .spawn()
             .map_err(|e| GanyuError::ToolFailed("exec".into(), e.to_string()))?;
         drop(child.stdin.take()); // 关闭 stdin（exec 参数即命令本身，无需输入）
-        // 超时等待，防命令卡死挂线程（30s）。
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            child.wait_with_output(),
-        )
-        .await
-        .map_err(|_| GanyuError::ToolFailed("exec".into(), "执行超时（30s 上限）".into()))?
-        .map_err(|e| GanyuError::ToolFailed("exec".into(), e.to_string()))?;
+                                  // 超时等待，防命令卡死挂线程（30s）。
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(30), child.wait_with_output())
+                .await
+                .map_err(|_| GanyuError::ToolFailed("exec".into(), "执行超时（30s 上限）".into()))?
+                .map_err(|e| GanyuError::ToolFailed("exec".into(), e.to_string()))?;
         // 输出大小截断（防结果膨胀）：1MB 上限（按字符数，避免 UTF-8 边界 panic）。
         const MAX_OUT: usize = 1024 * 1024;
         let truncate = |v: Vec<u8>| -> String {
             let s = String::from_utf8_lossy(&v).trim().to_string();
             if s.chars().count() > MAX_OUT {
-                format!("{}…[已截断：输出超过 1MB 上限]", s.chars().take(MAX_OUT).collect::<String>())
+                format!(
+                    "{}…[已截断：输出超过 1MB 上限]",
+                    s.chars().take(MAX_OUT).collect::<String>()
+                )
             } else {
                 s
             }
@@ -406,7 +409,8 @@ impl Tool for WebFetch {
 fn regex_fullmatch(pat: &str, s: &str) -> bool {
     use std::sync::OnceLock;
     static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(pat).unwrap()).is_match(s)
+    RE.get_or_init(|| regex::Regex::new(pat).unwrap())
+        .is_match(s)
 }
 
 /// 极简安全算术求值（仅 + - * / 与括号，f64）。无第三方依赖。
@@ -417,7 +421,10 @@ fn eval_expr(s: &str) -> GanyuResult<f64> {
 
     fn parse_expr(chars: &[char], pos: &mut usize, depth: usize) -> GanyuResult<f64> {
         if depth > MAX_DEPTH {
-            return Err(GanyuError::ToolFailed("calc".into(), "表达式嵌套过深".into()));
+            return Err(GanyuError::ToolFailed(
+                "calc".into(),
+                "表达式嵌套过深".into(),
+            ));
         }
         let mut left = parse_term(chars, pos, depth)?;
         while *pos < chars.len() {
@@ -503,7 +510,10 @@ mod tests {
     #[tokio::test]
     async fn echo_and_calc() {
         let (reg, _m) = reg_with_mem();
-        assert_eq!(reg.call("echo", &Value("hi".into())).await.unwrap(), Value("hi".into()));
+        assert_eq!(
+            reg.call("echo", &Value("hi".into())).await.unwrap(),
+            Value("hi".into())
+        );
         assert_eq!(
             reg.call("calc", &Value("(1+2)*3".into())).await.unwrap(),
             Value("9".to_string())
@@ -526,7 +536,9 @@ mod tests {
     #[tokio::test]
     async fn remember_recall_rag() {
         let (reg, _m) = reg_with_mem();
-        reg.call("remember", &Value("city\n杭州".into())).await.unwrap();
+        reg.call("remember", &Value("city\n杭州".into()))
+            .await
+            .unwrap();
         let got = reg.call("recall", &Value("city".into())).await.unwrap();
         assert_eq!(got, Value("杭州".into()));
         let hits = reg.call("rag_search", &Value("杭州".into())).await.unwrap();

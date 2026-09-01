@@ -30,6 +30,8 @@ cargo --features shell ─┐
 | `GANYU_LLM_CACHE_TTL` | `0`（关） | LLM 响应缓存 TTL（毫秒） |
 | `GANYU_RATE_PER_MIN` | `0`（不限） | 网关每分钟请求上限 |
 | `GANYU_AUDIT` | 关 | `1`/`stderr`/文件路径 → JSON Lines 审计 |
+| `GANYU_HTTP_BIND` | 无 | 多平台网关 HTTP 桥接绑定地址（如 `127.0.0.1:8080`；network 特性） |
+| `GANYU_HTTP_TOKEN` | 无 | HTTP 桥接 Bearer 鉴权 token；**绑定非回环地址时必填**，否则桥接拒绝启动 |
 | `OV_BASE` | 无 | OpenViking 记忆服务（network） |
 | `OPENAI_API_BASE` / `OPENAI_API_KEY` | 无 | OpenAI 兼容后端（network） |
 | `OPENAI_MODEL` | `gpt-4o-mini` | 模型 id（OpenAI 兼容端点；推理模型自动兼容 `reasoning_content`） |
@@ -52,9 +54,14 @@ base_url = "https://apihub.agnes-ai.com/v1"
 api_key = "sk-..."
 model = "agnes-2.5-flash"
 
-# 可选：Telegram 消息平台网关（ganyu gateway start 使用）
+# 可选：多平台网关（ganyu gateway start 使用）
 [gateway]
 telegram_token = "123456:ABC..."
+
+# HTTP Webhook 桥接：任意平台（或 OpenClaw）POST /message 转发消息到 ganyu
+http_bind = "127.0.0.1:8080"
+# 绑定非回环地址（0.0.0.0 / 局域网 IP）时必填，否则桥接拒绝启动（fail-closed）：
+# http_token = "your-strong-random-token"
 ```
 
 规则：路径优先级 `$GANYU_CONFIG` > `~/.ganyu/config.toml` > `./ganyu.toml`；
@@ -110,6 +117,7 @@ docker run --rm -it \
 | 插件开但 `GANYU_PLUGIN_ALLOW` 空 | 全部插件被拒（安全但无用），补白名单 |
 | `GANYU_MEM_KEY` < 12 字符 | 加密强度不足，建议 ≥16 强口令 |
 | LLM 缓存开但无限速 | 建议同时设 `GANYU_RATE_PER_MIN` |
+| HTTP 桥接绑定非回环地址 | 必配 `GANYU_HTTP_TOKEN`，且仅置于可信网络 / 反向代理之后 |
 
 ## 5. 常见问题
 

@@ -43,16 +43,12 @@ fn box_node(
     )
 }
 
-fn edge(
-    x1: f64,
-    y1: f64,
-    x2: f64,
-    y2: f64,
-    label: &str,
-    color: &str,
-    dash: bool,
-) -> String {
-    let d = if dash { " stroke-dasharray=\"6,4\"" } else { "" };
+fn edge(x1: f64, y1: f64, x2: f64, y2: f64, label: &str, color: &str, dash: bool) -> String {
+    let d = if dash {
+        " stroke-dasharray=\"6,4\""
+    } else {
+        ""
+    };
     let mut a = format!(
         "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"1.4\"{}{}\"/>",
         x1, y1, x2, y2, color, d, " marker-end=\"url(#arrow)\""
@@ -80,13 +76,26 @@ fn gen_role_interaction(out_dir: &str) -> GanyuResult<()> {
     let w: usize = 820;
     let h: usize = 580;
     let mut s: Vec<String> = Vec::new();
-    s.push(HEAD.replace("{w}", &w.to_string()).replace("{h}", &h.to_string()));
+    s.push(
+        HEAD.replace("{w}", &w.to_string())
+            .replace("{h}", &h.to_string()),
+    );
 
     let cx = 300.0;
     let cy = 250.0;
     let cw = 220.0;
     let ch = 96.0;
-    s.push(box_node(cx, cy, cw, ch, "ganyu-agent 核心", "#3B5B92", "#27406B", 17.0, true));
+    s.push(box_node(
+        cx,
+        cy,
+        cw,
+        ch,
+        "ganyu-agent 核心",
+        "#3B5B92",
+        "#27406B",
+        17.0,
+        true,
+    ));
     s.push(format!(
         "<text x=\"{}\" y=\"{}\" font-size=\"11\" text-anchor=\"middle\" fill=\"#FFFFFF\" style=\"font-family:Segoe UI,Microsoft YaHei,sans-serif\">多范式引擎 · 安全基件 · upload-repo-init</text>",
         cx + cw / 2.0,
@@ -94,20 +103,62 @@ fn gen_role_interaction(out_dir: &str) -> GanyuResult<()> {
     ));
 
     let roles: [(f64, f64, &str); 5] = [
-        (50.0,  50.0,  "甲方决策者 (项目 Owner)"),
-        (575.0, 50.0,  "AI 编码团队 Lead"),
-        (50.0,  450.0, "合规审计"),
+        (50.0, 50.0, "甲方决策者 (项目 Owner)"),
+        (575.0, 50.0, "AI 编码团队 Lead"),
+        (50.0, 450.0, "合规审计"),
         (575.0, 450.0, "CI / 运维 SRE"),
         (310.0, 490.0, "终端开发者 / CLI 使用者"),
     ];
     for (rx, ry, rl) in roles.iter() {
-        s.push(box_node(*rx, *ry, 195.0, 56.0, rl, "#E8EEF7", "#3B5B92", 12.0, true));
+        s.push(box_node(
+            *rx, *ry, 195.0, 56.0, rl, "#E8EEF7", "#3B5B92", 12.0, true,
+        ));
     }
-    s.push(edge(245.0, 78.0, cx + 35.0, cy, "架构/ROI/合规把关", "#6B7A99", false));
-    s.push(edge(575.0 + 97.0, 78.0, cx + cw - 35.0, cy, "监控/干预/合规查看", "#6B7A99", false));
-    s.push(edge(147.0, 450.0 + 28.0, cx + 35.0, cy + ch, "审计留痕/完整性核验", "#6B7A99", false));
-    s.push(edge(575.0 + 97.0, 450.0 + 28.0, cx + cw - 35.0, cy + ch, "部署/升级/监控/回滚", "#6B7A99", false));
-    s.push(edge(407.0, 490.0, cx + cw / 2.0, cy + ch, "工作流/记忆/插件/仓库初始化", "#6B7A99", false));
+    s.push(edge(
+        245.0,
+        78.0,
+        cx + 35.0,
+        cy,
+        "架构/ROI/合规把关",
+        "#6B7A99",
+        false,
+    ));
+    s.push(edge(
+        575.0 + 97.0,
+        78.0,
+        cx + cw - 35.0,
+        cy,
+        "监控/干预/合规查看",
+        "#6B7A99",
+        false,
+    ));
+    s.push(edge(
+        147.0,
+        450.0 + 28.0,
+        cx + 35.0,
+        cy + ch,
+        "审计留痕/完整性核验",
+        "#6B7A99",
+        false,
+    ));
+    s.push(edge(
+        575.0 + 97.0,
+        450.0 + 28.0,
+        cx + cw - 35.0,
+        cy + ch,
+        "部署/升级/监控/回滚",
+        "#6B7A99",
+        false,
+    ));
+    s.push(edge(
+        407.0,
+        490.0,
+        cx + cw / 2.0,
+        cy + ch,
+        "工作流/记忆/插件/仓库初始化",
+        "#6B7A99",
+        false,
+    ));
 
     let ext: [(&str, f64, f64); 5] = [
         ("LLM 网关 / 后端", 620.0, 120.0),
@@ -117,13 +168,55 @@ fn gen_role_interaction(out_dir: &str) -> GanyuResult<()> {
         ("远端仓库 (opt-in)", 50.0, 120.0),
     ];
     for (name, ex, ey) in ext.iter() {
-        s.push(box_node(*ex, *ey, 150.0, 50.0, name, "#FBEEDA", "#C8922E", 11.0, false));
+        s.push(box_node(
+            *ex, *ey, 150.0, 50.0, name, "#FBEEDA", "#C8922E", 11.0, false,
+        ));
     }
-    s.push(edge(cx + cw, cy + 12.0, 620.0, 145.0, "模型推理/补全", "#6B7A99", false));
-    s.push(edge(cx + cw, cy + 45.0, 620.0, 220.0, "记忆读写/召回", "#6B7A99", false));
-    s.push(edge(cx + cw, cy + 78.0, 620.0, 295.0, "工具扩展(本地子进程)", "#6B7A99", false));
-    s.push(edge(cx, cy + 12.0, 200.0, 145.0, "push(F10)", "#6B7A99", true));
-    s.push(edge(cx, cy + 78.0, 200.0, 220.0, "三平台签名构建", "#6B7A99", true));
+    s.push(edge(
+        cx + cw,
+        cy + 12.0,
+        620.0,
+        145.0,
+        "模型推理/补全",
+        "#6B7A99",
+        false,
+    ));
+    s.push(edge(
+        cx + cw,
+        cy + 45.0,
+        620.0,
+        220.0,
+        "记忆读写/召回",
+        "#6B7A99",
+        false,
+    ));
+    s.push(edge(
+        cx + cw,
+        cy + 78.0,
+        620.0,
+        295.0,
+        "工具扩展(本地子进程)",
+        "#6B7A99",
+        false,
+    ));
+    s.push(edge(
+        cx,
+        cy + 12.0,
+        200.0,
+        145.0,
+        "push(F10)",
+        "#6B7A99",
+        true,
+    ));
+    s.push(edge(
+        cx,
+        cy + 78.0,
+        200.0,
+        220.0,
+        "三平台签名构建",
+        "#6B7A99",
+        true,
+    ));
     s.push(TAIL.to_string());
 
     let p = format!("{}/role_interaction.svg", out_dir);
@@ -136,7 +229,10 @@ fn gen_upload_repo_lane(out_dir: &str) -> GanyuResult<()> {
     let w: usize = 880;
     let h: usize = 600;
     let mut s: Vec<String> = Vec::new();
-    s.push(HEAD.replace("{w}", &w.to_string()).replace("{h}", &h.to_string()));
+    s.push(
+        HEAD.replace("{w}", &w.to_string())
+            .replace("{h}", &h.to_string()),
+    );
 
     let lanes: [(f64, &str); 4] = [
         (0.0, "终端开发者"),
@@ -161,31 +257,196 @@ fn gen_upload_repo_lane(out_dir: &str) -> GanyuResult<()> {
     }
 
     let step = |lane_y: f64, x: f64, label: &str, fill: &str, stroke: &str, fs: f64| -> String {
-        box_node(x, lane_y + 22.0, 210.0, 52.0, label, fill, stroke, fs, false)
+        box_node(
+            x,
+            lane_y + 22.0,
+            210.0,
+            52.0,
+            label,
+            fill,
+            stroke,
+            fs,
+            false,
+        )
     };
 
-    s.push(step(0.0, 210.0, "执行 `ganyu repo init <path>`\n(单命令, 步骤数 <= 1)", "#DDEBFF", "#3B5B92", 11.0));
-    s.push(step(96.0, 210.0, "Check-Before-Act 幂等键检查", "#DDEBFF", "#3B5B92", 11.0));
-    s.push(step(192.0, 210.0, "resolve_sandboxed /\nssrf_guard_resolve", "#FBEEDA", "#C8922E", 11.0));
-    s.push(step(96.0, 450.0, "状态机: Pending->Running", "#DDEBFF", "#3B5B92", 11.0));
-    s.push(step(192.0, 450.0, "restrict_file_permissions /\nshell 双层门禁 (fail-closed)", "#FBEEDA", "#C8922E", 11.0));
-    s.push(step(288.0, 450.0, "git init/clone/commit\n写入 .git / objects", "#E6F4E6", "#2E7D32", 11.0));
-    s.push(step(96.0, 690.0, "状态机: -> Succeeded", "#DDEBFF", "#3B5B92", 11.0));
-    s.push(step(288.0, 690.0, "已初始化仓库落盘", "#E6F4E6", "#2E7D32", 11.0));
-    s.push(step(0.0, 690.0, "收到一致结果 / 审计日志 NDJSON", "#DDEBFF", "#3B5B92", 11.0));
+    s.push(step(
+        0.0,
+        210.0,
+        "执行 `ganyu repo init <path>`\n(单命令, 步骤数 <= 1)",
+        "#DDEBFF",
+        "#3B5B92",
+        11.0,
+    ));
+    s.push(step(
+        96.0,
+        210.0,
+        "Check-Before-Act 幂等键检查",
+        "#DDEBFF",
+        "#3B5B92",
+        11.0,
+    ));
+    s.push(step(
+        192.0,
+        210.0,
+        "resolve_sandboxed /\nssrf_guard_resolve",
+        "#FBEEDA",
+        "#C8922E",
+        11.0,
+    ));
+    s.push(step(
+        96.0,
+        450.0,
+        "状态机: Pending->Running",
+        "#DDEBFF",
+        "#3B5B92",
+        11.0,
+    ));
+    s.push(step(
+        192.0,
+        450.0,
+        "restrict_file_permissions /\nshell 双层门禁 (fail-closed)",
+        "#FBEEDA",
+        "#C8922E",
+        11.0,
+    ));
+    s.push(step(
+        288.0,
+        450.0,
+        "git init/clone/commit\n写入 .git / objects",
+        "#E6F4E6",
+        "#2E7D32",
+        11.0,
+    ));
+    s.push(step(
+        96.0,
+        690.0,
+        "状态机: -> Succeeded",
+        "#DDEBFF",
+        "#3B5B92",
+        11.0,
+    ));
+    s.push(step(
+        288.0,
+        690.0,
+        "已初始化仓库落盘",
+        "#E6F4E6",
+        "#2E7D32",
+        11.0,
+    ));
+    s.push(step(
+        0.0,
+        690.0,
+        "收到一致结果 / 审计日志 NDJSON",
+        "#DDEBFF",
+        "#3B5B92",
+        11.0,
+    ));
 
-    s.push(box_node(210.0, 396.0, 470.0, 40.0, "失败 -> 补偿回滚 (Failed) -> 开发者收到明确错误", "#FBD9D9", "#B23B3B", 11.0, false));
-    s.push(box_node(210.0, 546.0, 470.0, 40.0, "重复执行 -> 幂等键命中 -> 直接返回 Succeeded（结果一致）", "#DDEBFF", "#3B5B92", 11.0, false));
+    s.push(box_node(
+        210.0,
+        396.0,
+        470.0,
+        40.0,
+        "失败 -> 补偿回滚 (Failed) -> 开发者收到明确错误",
+        "#FBD9D9",
+        "#B23B3B",
+        11.0,
+        false,
+    ));
+    s.push(box_node(
+        210.0,
+        546.0,
+        470.0,
+        40.0,
+        "重复执行 -> 幂等键命中 -> 直接返回 Succeeded（结果一致）",
+        "#DDEBFF",
+        "#3B5B92",
+        11.0,
+        false,
+    ));
 
-    s.push(edge(315.0, 0.0 + 48.0, 315.0, 96.0 + 22.0, "启动", "#6B7A99", false));
-    s.push(edge(315.0, 96.0 + 74.0, 315.0, 192.0 + 22.0, "委派安全校验", "#6B7A99", false));
-    s.push(edge(420.0, 192.0 + 48.0, 450.0, 96.0 + 48.0, "校验通过", "#2E7D32", false));
-    s.push(edge(450.0, 96.0 + 74.0, 450.0, 288.0 + 22.0, "驱动 git 操作", "#6B7A99", false));
-    s.push(edge(450.0, 288.0 + 74.0, 450.0, 96.0 + 74.0, "完成回调", "#2E7D32", false));
-    s.push(edge(450.0, 96.0 + 74.0, 690.0, 96.0 + 48.0, "Succeeded", "#6B7A99", false));
-    s.push(edge(795.0, 288.0 + 48.0, 795.0, 0.0 + 48.0, "结果反馈", "#6B7A99", false));
-    s.push(edge(315.0, 96.0 + 74.0, 210.0, 416.0, "异常分支", "#B23B3B", true));
-    s.push(edge(315.0, 96.0 + 48.0, 210.0, 566.0, "幂等命中", "#3B5B92", true));
+    s.push(edge(
+        315.0,
+        0.0 + 48.0,
+        315.0,
+        96.0 + 22.0,
+        "启动",
+        "#6B7A99",
+        false,
+    ));
+    s.push(edge(
+        315.0,
+        96.0 + 74.0,
+        315.0,
+        192.0 + 22.0,
+        "委派安全校验",
+        "#6B7A99",
+        false,
+    ));
+    s.push(edge(
+        420.0,
+        192.0 + 48.0,
+        450.0,
+        96.0 + 48.0,
+        "校验通过",
+        "#2E7D32",
+        false,
+    ));
+    s.push(edge(
+        450.0,
+        96.0 + 74.0,
+        450.0,
+        288.0 + 22.0,
+        "驱动 git 操作",
+        "#6B7A99",
+        false,
+    ));
+    s.push(edge(
+        450.0,
+        288.0 + 74.0,
+        450.0,
+        96.0 + 74.0,
+        "完成回调",
+        "#2E7D32",
+        false,
+    ));
+    s.push(edge(
+        450.0,
+        96.0 + 74.0,
+        690.0,
+        96.0 + 48.0,
+        "Succeeded",
+        "#6B7A99",
+        false,
+    ));
+    s.push(edge(
+        795.0,
+        288.0 + 48.0,
+        795.0,
+        0.0 + 48.0,
+        "结果反馈",
+        "#6B7A99",
+        false,
+    ));
+    s.push(edge(
+        315.0,
+        96.0 + 74.0,
+        210.0,
+        416.0,
+        "异常分支",
+        "#B23B3B",
+        true,
+    ));
+    s.push(edge(
+        315.0,
+        96.0 + 48.0,
+        210.0,
+        566.0,
+        "幂等命中",
+        "#3B5B92",
+        true,
+    ));
     s.push(TAIL.to_string());
 
     let p = format!("{}/upload_repo_init_lane.svg", out_dir);

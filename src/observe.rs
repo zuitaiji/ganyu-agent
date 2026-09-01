@@ -43,7 +43,10 @@ impl AuditLog {
                 .map(|f| std::fs::File::try_clone(&f).unwrap_or(f)),
             _ => None,
         };
-        AuditLog { target, writer: Mutex::new(writer) }
+        AuditLog {
+            target,
+            writer: Mutex::new(writer),
+        }
     }
 
     pub fn from_config() -> Self {
@@ -64,9 +67,7 @@ impl AuditLog {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
-        let line = format!(
-            "{{\"ts\":{ts:.3},\"ev\":\"{kind}\",\"detail\":{detail}}}\n"
-        );
+        let line = format!("{{\"ts\":{ts:.3},\"ev\":\"{kind}\",\"detail\":{detail}}}\n");
         match &self.target {
             AuditTarget::Stderr => {
                 let _ = eprint!("{line}");
@@ -93,13 +94,12 @@ impl AuditLog {
             AuditEvent::SecurityDenial { kind, reason } => {
                 ("security_denial".into(), kv(kind, reason))
             }
-            AuditEvent::GatewayFallback { from, to } => {
-                ("gateway_fallback".into(), kv(from, to))
-            }
+            AuditEvent::GatewayFallback { from, to } => ("gateway_fallback".into(), kv(from, to)),
             AuditEvent::RateLimited { reason } => ("rate_limited".into(), detail(reason)),
-            AuditEvent::LlmCacheHit { ms } => {
-                ("llm_cache_hit".into(), serde_json::json!({ "ms": ms }).to_string())
-            }
+            AuditEvent::LlmCacheHit { ms } => (
+                "llm_cache_hit".into(),
+                serde_json::json!({ "ms": ms }).to_string(),
+            ),
             AuditEvent::BaselineAdvice { advice } => ("baseline_advice".into(), detail(advice)),
         }
     }
@@ -112,7 +112,11 @@ mod tests {
     #[test]
     fn render_produces_json_lines() {
         let log = AuditLog::new(AuditTarget::Off);
-        let (kind, detail) = log.render(AuditEvent::ToolCall { tool: "calc", ok: true, ms: 3 });
+        let (kind, detail) = log.render(AuditEvent::ToolCall {
+            tool: "calc",
+            ok: true,
+            ms: 3,
+        });
         assert_eq!(kind, "tool_call");
         assert!(detail.contains("\"tool\":\"calc\""));
         assert!(detail.contains("\"ok\":true"));

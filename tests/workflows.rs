@@ -123,11 +123,18 @@ async fn router_dispatches_by_keyword_and_falls_back() {
             out: "SUMMARIZED".into(),
         }) as Arc<dyn Unit>,
     );
-    let router = Arc::new(KeywordRouter::new(vec![("总结", "summarize"), ("summarize", "summarize")]));
-    let wf = RouterWorkflow::new(router, routes, Arc::new(ConstUnit {
-        name: "fallback".into(),
-        out: "FALLBACK".into(),
-    }));
+    let router = Arc::new(KeywordRouter::new(vec![
+        ("总结", "summarize"),
+        ("summarize", "summarize"),
+    ]));
+    let wf = RouterWorkflow::new(
+        router,
+        routes,
+        Arc::new(ConstUnit {
+            name: "fallback".into(),
+            out: "FALLBACK".into(),
+        }),
+    );
 
     let routed = wf
         .run(&c, &Value("帮我总结一下这段内容".into()))
@@ -219,8 +226,20 @@ async fn graph_executes_dag_in_order() {
 async fn graph_detects_cycle() {
     let c = ctx("cycle");
     let r = GraphBuilder::default()
-        .node("a", Arc::new(ConstUnit { name: "a".into(), out: "x".into() }))
-        .node("b", Arc::new(ConstUnit { name: "b".into(), out: "y".into() }))
+        .node(
+            "a",
+            Arc::new(ConstUnit {
+                name: "a".into(),
+                out: "x".into(),
+            }),
+        )
+        .node(
+            "b",
+            Arc::new(ConstUnit {
+                name: "b".into(),
+                out: "y".into(),
+            }),
+        )
         .edge("a", "b")
         .edge("b", "a")
         .end("b")

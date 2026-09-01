@@ -30,14 +30,25 @@ fn run_git(args: &[&str], cwd: &str) -> GanyuResult<String> {
 
 fn print_stats(diff: &str) {
     let lines: Vec<&str> = diff.split('\n').collect();
-    let added = lines.iter().filter(|l| l.starts_with('+') && !l.starts_with("+++")).count();
-    let removed = lines.iter().filter(|l| l.starts_with('-') && !l.starts_with("---")).count();
+    let added = lines
+        .iter()
+        .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+        .count();
+    let removed = lines
+        .iter()
+        .filter(|l| l.starts_with('-') && !l.starts_with("---"))
+        .count();
     let files: Vec<&str> = lines
         .iter()
         .filter(|l| l.starts_with("+++ b/"))
         .map(|l| &l[6..])
         .collect();
-    println!("变更统计: {} 个文件，+{} 行，-{} 行", files.len(), added, removed);
+    println!(
+        "变更统计: {} 个文件，+{} 行，-{} 行",
+        files.len(),
+        added,
+        removed
+    );
     if !files.is_empty() {
         println!("变更文件:");
         for f in files {
@@ -92,8 +103,12 @@ pub fn run_local(args: &[String]) -> GanyuResult<()> {
     // 仓库存在性校验（失败闭环：非仓库直接报错，不静默继续）。
     run_git(&["rev-parse", "--git-dir"], &path)?;
 
-    let cur_branch = run_git(&["rev-parse", "--abbrev-ref", "HEAD"], &path)?.trim().to_string();
-    let last_commit = run_git(&["log", "-1", "--format=%h %s", "--"], &path)?.trim().to_string();
+    let cur_branch = run_git(&["rev-parse", "--abbrev-ref", "HEAD"], &path)?
+        .trim()
+        .to_string();
+    let last_commit = run_git(&["log", "-1", "--format=%h %s", "--"], &path)?
+        .trim()
+        .to_string();
     println!("仓库路径: {path}");
     println!("当前分支: {cur_branch}");
     println!("最新提交: {last_commit}");
@@ -154,7 +169,7 @@ pub async fn run_remote(args: &[String]) -> GanyuResult<()> {
 
     let mut i = 0;
     while i < args.len() {
-        match args[i].as_str()  {
+        match args[i].as_str() {
             "--provider" => {
                 provider = args.get(i + 1).cloned();
                 i += 1;
@@ -176,7 +191,10 @@ pub async fn run_remote(args: &[String]) -> GanyuResult<()> {
                 i += 1;
             }
             "--base-url" => {
-                base_url = args.get(i + 1).cloned().unwrap_or_else(|| "https://gitlab.com".to_string());
+                base_url = args
+                    .get(i + 1)
+                    .cloned()
+                    .unwrap_or_else(|| "https://gitlab.com".to_string());
                 i += 1;
             }
             "--help" | "-h" => {
@@ -255,11 +273,16 @@ async fn get_github_diff(
 ) -> GanyuResult<String> {
     use crate::error::GanyuError;
     let url = format!("https://api.github.com/repos/{owner}/{repo}/pulls/{pr}");
-    let mut req = client.get(&url).header("Accept", "application/vnd.github.v3.diff");
+    let mut req = client
+        .get(&url)
+        .header("Accept", "application/vnd.github.v3.diff");
     if let Some(t) = token {
         req = req.header("Authorization", format!("token {t}"));
     }
-    let resp = req.send().await.map_err(|e| GanyuError::Http(e.to_string()))?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| GanyuError::Http(e.to_string()))?;
     if !resp.status().is_success() {
         let code = resp.status().as_u16();
         let msg = match code {
@@ -269,7 +292,10 @@ async fn get_github_diff(
         };
         return Err(GanyuError::Http(msg));
     }
-    Ok(resp.text().await.map_err(|e| GanyuError::Http(e.to_string()))?)
+    Ok(resp
+        .text()
+        .await
+        .map_err(|e| GanyuError::Http(e.to_string()))?)
 }
 
 #[cfg(feature = "network")]
@@ -287,7 +313,10 @@ async fn get_gitlab_diff(
     if let Some(t) = token {
         req = req.header("PRIVATE-TOKEN", t);
     }
-    let resp = req.send().await.map_err(|e| GanyuError::Http(e.to_string()))?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| GanyuError::Http(e.to_string()))?;
     if !resp.status().is_success() {
         let code = resp.status().as_u16();
         let msg = match code {
@@ -297,7 +326,10 @@ async fn get_gitlab_diff(
         };
         return Err(GanyuError::Http(msg));
     }
-    let arr: serde_json::Value = resp.json().await.map_err(|e| GanyuError::Http(e.to_string()))?;
+    let arr: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| GanyuError::Http(e.to_string()))?;
     let mut out = String::new();
     if let Some(items) = arr.as_array() {
         for d in items {
@@ -323,8 +355,7 @@ fn parse_github_url(u: &str) -> Option<(String, String, String)> {
 
 #[cfg(feature = "network")]
 fn parse_gitlab_url(u: &str) -> Option<(String, String, String)> {
-    let re =
-        regex::Regex::new(r"https://([^/]+)/([^/]+)/([^/]+)/-/merge_requests/(\d+)").ok()?;
+    let re = regex::Regex::new(r"https://([^/]+)/([^/]+)/([^/]+)/-/merge_requests/(\d+)").ok()?;
     let caps = re.captures(u)?;
     Some((
         format!("https://{}", caps.get(1)?.as_str()),
@@ -339,8 +370,9 @@ fn repo_from_remote() -> GanyuResult<(String, String)> {
     let out = run_git(&["remote", "get-url", "origin"], ".").unwrap_or_default();
     let out = out.trim();
     // git@github.com:owner/repo.git 或 https://github.com/owner/repo.git
-    let re = regex::Regex::new(r"(?:git@github\.com:|https://github\.com/)([^/]+)/([^/]+?)(?:\.git)?$")
-        .map_err(|e| GanyuError::Regex(e))?;
+    let re =
+        regex::Regex::new(r"(?:git@github\.com:|https://github\.com/)([^/]+)/([^/]+?)(?:\.git)?$")
+            .map_err(|e| GanyuError::Regex(e))?;
     if let Some(c) = re.captures(out) {
         return Ok((
             c.get(1)

@@ -7,7 +7,9 @@ use std::io::Read;
 pub fn run(_args: &[String]) -> GanyuResult<()> {
     let mut buf = String::new();
     if std::io::stdin().read_to_string(&mut buf).is_err() {
-        return Err(crate::error::GanyuError::Forbidden("读取 stdin 失败".into()));
+        return Err(crate::error::GanyuError::Forbidden(
+            "读取 stdin 失败".into(),
+        ));
     }
     print!("{}", buf.to_uppercase());
     Ok(())

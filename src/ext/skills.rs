@@ -78,10 +78,9 @@ impl Tool for SkillTool {
         &self.description
     }
     async fn invoke(&self, input: &Value) -> GanyuResult<Value> {
-        let skill = self
-            .book
-            .get_skill(&self.skill_name)
-            .ok_or_else(|| crate::error::GanyuError::ToolNotFound(format!("skill:{}", self.skill_name)))?;
+        let skill = self.book.get_skill(&self.skill_name).ok_or_else(|| {
+            crate::error::GanyuError::ToolNotFound(format!("skill:{}", self.skill_name))
+        })?;
         let mut last = Value::default();
         for step in &skill.steps {
             match step {
@@ -177,7 +176,10 @@ mod tests {
             .call("file_write", &Value(format!("{p}\nline1\nline2\nline3")))
             .await
             .unwrap();
-        let out = tools.call("skill:summarize", &Value(p.into())).await.unwrap();
+        let out = tools
+            .call("skill:summarize", &Value(p.into()))
+            .await
+            .unwrap();
         assert!(out.as_str().contains("摘要"));
         assert!(out.as_str().contains("3 行"));
         let _ = std::fs::remove_file(p);

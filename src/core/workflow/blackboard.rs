@@ -24,11 +24,7 @@ pub struct BlackboardWorkflow {
 }
 
 impl BlackboardWorkflow {
-    pub fn new(
-        agents: Vec<Arc<dyn Unit>>,
-        synthesizer: Arc<dyn Unit>,
-        max_rounds: usize,
-    ) -> Self {
+    pub fn new(agents: Vec<Arc<dyn Unit>>, synthesizer: Arc<dyn Unit>, max_rounds: usize) -> Self {
         BlackboardWorkflow {
             agents,
             synthesizer,

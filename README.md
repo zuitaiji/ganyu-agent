@@ -50,7 +50,7 @@ ganyu update               # 从 GitHub Releases 自动升级到最新版
 ganyu run "你好"            # 单次对话
 ganyu run "@calc (1+2)*3"  # 工具（离线可用）
 ganyu agent "任务" --mode multi   # 多范式
-ganyu gateway start        # 接 Telegram 消息平台（可选）
+ganyu gateway start        # 启动多平台网关（Telegram / HTTP Webhook 桥接，fail-closed）
 ganyu tools | modes | selftest    # 工具/范式/自检
 ```
 

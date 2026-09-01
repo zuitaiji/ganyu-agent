@@ -3,8 +3,9 @@
 //! `poll` 用 `getUpdates` 长轮询（timeout=25s），`send` 用 `sendMessage`。
 //! 失败时打印并退避 3s 后返回空（自愈：下一轮重试），不向上抛错打断网关。
 
-use std::sync::Mutex;
 use std::time::Duration;
+
+use tokio::sync::Mutex;
 
 use async_trait::async_trait;
 
@@ -21,10 +22,12 @@ pub struct TelegramAdapter {
 
 impl TelegramAdapter {
     pub fn new(token: &str) -> Self {
+        // 构建仅在 TLS 后端初始化失败时出错。降级为默认客户端而非 panic——
+        // release 配置为 panic=abort，一次 panic 会让整个常驻网关进程（含其他平台）退出。
         let client = reqwest::Client::builder()
             .user_agent("ganyu-gateway")
             .build()
-            .expect("telegram client 构建失败（reqwest 初始化异常）");
+            .unwrap_or_else(|_| reqwest::Client::new());
         let api = format!("https://api.telegram.org/bot{token}");
         TelegramAdapter {
             client,
@@ -41,7 +44,7 @@ impl PlatformAdapter for TelegramAdapter {
     }
 
     async fn poll(&self) -> GanyuResult<Vec<InboundMessage>> {
-        let offset = *self.offset.lock().unwrap();
+        let offset = *self.offset.lock().await;
         let resp = self
             .client
             .get(format!("{}/getUpdates", self.api))
@@ -77,7 +80,7 @@ impl PlatformAdapter for TelegramAdapter {
         };
         for upd in arr {
             if let Some(n) = upd["update_id"].as_i64() {
-                *self.offset.lock().unwrap() = n + 1;
+                *self.offset.lock().await = n + 1;
             }
             let Some(text) = upd["message"]["text"].as_str() else {
                 continue;
@@ -85,7 +88,9 @@ impl PlatformAdapter for TelegramAdapter {
             let Some(chat_id) = upd["message"]["chat"]["id"].as_i64() else {
                 continue;
             };
-            let from = upd["message"]["from"]["username"].as_str().unwrap_or("user");
+            let from = upd["message"]["from"]["username"]
+                .as_str()
+                .unwrap_or("user");
             let text = text.trim().to_string();
             if text.is_empty() {
                 continue;

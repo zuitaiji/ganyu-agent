@@ -440,13 +440,13 @@ impl Tool for NomifunSkillTool {
 
 /// 经网关程序派发（程序名受安全约束，拒绝绝对路径/盘符/穿越/元字符）。
 async fn dispatch_gateway(cmd: &str) -> GanyuResult<Value> {
-    use tokio::process::Command;
     use std::process::Stdio;
+    use tokio::process::Command;
 
     let mut parts = cmd.split_whitespace();
-    let prog = parts.next().ok_or_else(|| {
-        GanyuError::ToolFailed("nomifun_skill".into(), "网关命令为空".into())
-    })?;
+    let prog = parts
+        .next()
+        .ok_or_else(|| GanyuError::ToolFailed("nomifun_skill".into(), "网关命令为空".into()))?;
     if !is_safe_gateway_prog(prog) {
         return Err(GanyuError::ToolFailed(
             "nomifun_skill".into(),
@@ -465,17 +465,14 @@ async fn dispatch_gateway(cmd: &str) -> GanyuResult<Value> {
         })?;
     drop(child.stdin.take());
     // 超时等待，防网关程序卡死挂线程（30s）。
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        child.wait_with_output(),
-    )
-    .await
-    .map_err(|_| {
-        GanyuError::ToolFailed("nomifun_skill".into(), "网关执行超时（30s 上限）".into())
-    })?
-    .map_err(|e| {
-        GanyuError::ToolFailed("nomifun_skill".into(), format!("网关执行失败：{e}"))
-    })?;
+    let output = tokio::time::timeout(std::time::Duration::from_secs(30), child.wait_with_output())
+        .await
+        .map_err(|_| {
+            GanyuError::ToolFailed("nomifun_skill".into(), "网关执行超时（30s 上限）".into())
+        })?
+        .map_err(|e| {
+            GanyuError::ToolFailed("nomifun_skill".into(), format!("网关执行失败：{e}"))
+        })?;
     if !output.status.success() {
         return Err(GanyuError::ToolFailed(
             "nomifun_skill".into(),
@@ -490,7 +487,10 @@ async fn dispatch_gateway(cmd: &str) -> GanyuResult<Value> {
     let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
     const MAX_OUT: usize = 1024 * 1024;
     let text = if s.chars().count() > MAX_OUT {
-        format!("{}…[已截断：输出超过 1MB 上限]", s.chars().take(MAX_OUT).collect::<String>())
+        format!(
+            "{}…[已截断：输出超过 1MB 上限]",
+            s.chars().take(MAX_OUT).collect::<String>()
+        )
     } else {
         s
     };
@@ -507,9 +507,19 @@ fn is_safe_gateway_prog(prog: &str) -> bool {
     let lower = prog.to_lowercase();
     if matches!(
         lower.as_str(),
-        "sh" | "bash" | "cmd" | "powershell" | "pwsh" | "zsh" | "fish"
-            | "sh.exe" | "bash.exe" | "cmd.exe" | "powershell.exe" | "pwsh.exe"
-            | "zsh.exe" | "fish.exe"
+        "sh" | "bash"
+            | "cmd"
+            | "powershell"
+            | "pwsh"
+            | "zsh"
+            | "fish"
+            | "sh.exe"
+            | "bash.exe"
+            | "cmd.exe"
+            | "powershell.exe"
+            | "pwsh.exe"
+            | "zsh.exe"
+            | "fish.exe"
     ) {
         return false;
     }
@@ -549,7 +559,9 @@ mod tests {
 
     #[test]
     fn all_caps_registered_as_skills() {
-        let mem = Arc::new(LocalMemory::new(std::env::temp_dir().join("ganyu_nomifun_test_mem")));
+        let mem = Arc::new(LocalMemory::new(
+            std::env::temp_dir().join("ganyu_nomifun_test_mem"),
+        ));
         let book = SkillBook::new(mem);
         register_nomifun_skills(&book);
         let names = book.skill_names();
@@ -569,7 +581,11 @@ mod tests {
         }
         for cap in NOMIFUN_CAPS {
             let skill_md = base.join(folder_for_cap(cap.name)).join("SKILL.md");
-            assert!(skill_md.is_file(), "缺少同步的技能文件：{}", skill_md.display());
+            assert!(
+                skill_md.is_file(),
+                "缺少同步的技能文件：{}",
+                skill_md.display()
+            );
         }
     }
 }
