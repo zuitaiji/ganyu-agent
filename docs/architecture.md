@@ -1,6 +1,6 @@
 # ganyu-agent 架构总览
 
-> **最后更新：v0.1.15（2026-08-26）** — 本文是模块化 / 结构化权威快照，覆盖目录结构、分层、特性门控、能力边界矩阵、构建缓存、CI 发布链路。决策记录见 `docs/ADR-001~008`。
+> **最后更新：v0.1.19（2026-09-02）** — 本文是模块化 / 结构化权威快照，覆盖目录结构、分层、特性门控、能力边界矩阵、构建缓存、CI 发布链路。决策记录见 `docs/ADR-001~008`。
 > 范式为：**Pi 式极简 harness** × **OpenClaw 式执行网关** × **Hermes 式防护与闭环** × **Prime 式诚实边界**。
 
 ---
@@ -10,13 +10,14 @@
 | 项 | 当前值 |
 |----|--------|
 | 形态 | 单 crate Rust（无 `[workspace]`） |
-| 代码规模 | 39 个 `.rs` 文件 / 约 8970 行 / 201 个依赖条目 |
+| 代码规模 | 42 个 `.rs` 文件 / 约 10675 行 |
 | 二进制 | `target/release/ganyu-agent` 3.7M（已 strip） |
 | 特性门控 | **fail-closed**：`crypto`+`secret` 默认开；`network`/`shell`/`sign`/`sandbox` 默认关 |
 | 能力探测 | `ganyu-agent doctor`（边界矩阵）+ `ganyu-agent capabilities`（JSON 导出） |
 | 构建缓存 | 本地 sccache 对象级 + CI `Swatinem/rust-cache` 互补 |
+| 质量门禁 | `ci.yml`：PR / push main 触发 `fmt --check` → `clippy -D warnings` → `test` → `build --locked` |
 | 发布 | tag `v*` 触发三平台 hardened 构建 + R-1 Ed25519 签名，9 资产 |
-| 版本 | `v0.1.15`（Cargo.toml / Cargo.lock 同步） |
+| 版本 | `v0.1.19`（Cargo.toml / Cargo.lock 同步） |
 
 ---
 
@@ -27,10 +28,11 @@ ganyu-agent/                         (根目录)
 ├── .cargo/
 │   └── config.toml                  # sccache 对象级缓存 + CARGO_INCREMENTAL=0
 ├── .github/workflows/
+│   ├── ci.yml                       # 质量门禁（PR / push main）：fmt→clippy→test→build --locked
 │   └── release.yml                  # CI/CD：三平台构建+签名+发布（tag 触发）
 ├── src/                             # 全部 Rust 源码（39 文件 / ~8970 行）
-│   ├── main.rs            1353     # CLI 入口（手写 match 分发子命令）
-│   ├── config.rs           533     # 配置面：env + L2 Pi JSON 适配器（apply_pi_overrides）
+│   ├── main.rs            1479     # CLI 入口（手写 match 分发子命令）
+│   ├── config.rs           661     # 配置面：env + L2 Pi JSON 适配器（apply_pi_overrides）
 │   ├── security.rs         563     # 执行面：文件沙箱/SSRF/shell 开关/净化（失败闭环）
 │   ├── cache.rs            152     # LRU+TTL 只读工具缓存 / LLM 响应缓存
 │   ├── observe.rs          120     # JSON Lines 审计日志
@@ -68,6 +70,10 @@ ganyu-agent/                         (根目录)
 │   │   └── upper.rs         14
 │   ├── knowledge/       445        # MDL/SAG 知识分析面
 │   ├── routing/         317        # Gateway 网关路由（级联/熔断/lkgp/缓存/限速/审计）
+│   ├── gateway/         512        # 多平台网关适配器（Telegram + HTTP Webhook 桥接，fail-closed）
+│   │   ├── mod.rs          168     # 适配器装配 + run_adapter 常驻语义（单平台失败不中断）
+│   │   ├── http_bridge.rs   223     # HTTP 桥接（Bearer 鉴权 + 64KiB 上限 + 非回环 fail-closed）
+│   │   └── telegram.rs      121     # Telegram 长轮询（tokio Mutex，panic=abort 安全）
 │   ├── heal/            209        # 自愈重试/熔断/级联/限速
 │   └── persona/          22        # 人格层
 ├── tests/                          # 集成测试（integration.rs / workflows.rs / mock_mcp_server.py）
@@ -200,7 +206,9 @@ SCCACHE_CACHE_SIZE = "10G"       # 本地磁盘缓存上限
 
 ## 6. CI/CD 发布链路
 
-**触发**：`release.yml` 仅在 `push: tags: ["v*"]` 时运行（推 `main` 不触发 CI，故每次发布前必打 tag）。
+**双工作流分工（v0.1.17 起）**
+- `ci.yml`（`push: branches: [main]` + `pull_request`）：质量门禁，每次 PR / 推 main 即跑 `fmt --check` → `clippy -D warnings` → `test` → `build --release --features hardened --locked`；lint 回归直接阻断，防止告警再次累积。
+- `release.yml`：仅在 `push: tags: ["v*"]` 时运行，承担三平台构建 + 签名 + 发布（权威交付）。
 
 **actions 版本（已升级至 Node 24 运行时，消除 Node.js 20 deprecated 警告）**
 | action | 版本 | 用途 |
@@ -242,5 +250,5 @@ windows : ganyu-agent-windows.tar.gz + .sha256 + .sig
 
 - **本地构建受腾讯电脑管家实时防护拦截**（os error 5 写锁 + 并行编译 SIGKILL）—— 验证用 temp 副本 + `--offline` + 单作业绕过；**CI 是跨平台权威验证门**。
 - **能力边界矩阵为声明式手动维护**：新增特性门控能力时需在 `capability_matrix()` 同步加行（已在函数注释标注）。
-- **生态兼容路线图**：L1 MCP 已落地，L2 Pi 配置适配器已落地；L3（Prime RLM 范式 / OpenClaw 多平台网关）为既定未完方向。
+- **生态兼容路线图**：L1 MCP 已落地，L2 Pi 配置适配器已落地，L3 OpenClaw 多平台网关已落地（v0.1.16 Telegram + HTTP Webhook 桥接，v0.1.17 Bearer 鉴权 + 非回环 fail-closed + panic 治理）；Prime RLM 范式仍为既定方向。
 - **Node 24 升级已完成**（v0.1.15），CI 日志 `Node.js 20` 警告归零。
