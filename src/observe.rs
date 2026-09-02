@@ -70,7 +70,7 @@ impl AuditLog {
         let line = format!("{{\"ts\":{ts:.3},\"ev\":\"{kind}\",\"detail\":{detail}}}\n");
         match &self.target {
             AuditTarget::Stderr => {
-                let _ = eprint!("{line}");
+                eprint!("{line}");
             }
             AuditTarget::File(_) => {
                 if let Some(f) = self.writer.lock().unwrap().as_mut() {

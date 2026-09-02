@@ -39,7 +39,7 @@ impl Unit for ConstUnit {
 
 fn ctx(tag: &str) -> RunContext {
     let mem: DynMemory = Arc::new(LocalMemory::new(format!(".ganyu_wf_{tag}.json")));
-    let mut gw = Gateway::new();
+    let gw = Gateway::new();
     gw.register(Arc::new(LocalBackend) as DynBackend);
     let tools = Arc::new(ToolRegistry::new());
     register_core_tools(&tools, mem.clone());
@@ -62,7 +62,7 @@ fn ctx(tag: &str) -> RunContext {
 
 fn agent_unit(role: &str, tag: &str) -> Arc<dyn Unit> {
     let mem: DynMemory = Arc::new(LocalMemory::new(format!(".ganyu_wf_agent_{tag}.json")));
-    let mut gw = Gateway::new();
+    let gw = Gateway::new();
     gw.register(Arc::new(LocalBackend) as DynBackend);
     let tools = Arc::new(ToolRegistry::new());
     register_core_tools(&tools, mem.clone());
@@ -224,7 +224,7 @@ async fn graph_executes_dag_in_order() {
 
 #[tokio::test]
 async fn graph_detects_cycle() {
-    let c = ctx("cycle");
+    let _c = ctx("cycle");
     let r = GraphBuilder::default()
         .node(
             "a",

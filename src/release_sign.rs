@@ -16,6 +16,10 @@
 use crate::error::{GanyuError, GanyuResult};
 
 /// 生产公钥（公开值，来自 docs/update-sign 轮换，2026-08-18）。等价 seed_selfcheck.py 的 PROD_PUBKEY。
+///
+/// 仅 `seed-check` 使用，而该命令依赖 Ed25519 推导（`sign` 特性）；
+/// 非 sign 构建下不参与编译，故与 `cmd_seed_check` 同样门控，避免 dead_code。
+#[cfg(feature = "sign")]
 const PROD_PUBKEY: &str = "241db1db27d3c19c58df6a35de52a158080e310bdeb57c50ddca8e5c647b9ba4";
 
 #[cfg(feature = "sign")]

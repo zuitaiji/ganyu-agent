@@ -264,7 +264,7 @@ pub fn match_nomifun_intent(query: &str) -> Option<String> {
             let kl = kw.to_lowercase();
             if q.contains(&kl) {
                 let len = kl.chars().count();
-                if best.as_ref().map_or(true, |(_, b)| len > *b) {
+                if best.as_ref().is_none_or(|(_, b)| len > *b) {
                     best = Some((cap.name.to_string(), len));
                 }
             }
@@ -321,9 +321,12 @@ fn dirs_local_appdata() -> Option<PathBuf> {
 /// 去掉 SKILL.md 头部的 YAML frontmatter（`--- ... ---`）。
 fn strip_frontmatter(md: &str) -> String {
     let trimmed = md.trim_start();
-    if trimmed.starts_with("---") {
-        if let Some(end) = trimmed[3..].find("\n---") {
-            return trimmed[end + 4..].trim_start().to_string();
+    // 用 `strip_prefix` 而非下标切片：下标会让 `end` 相对 `trimmed[3..]`，
+    // 但后续又用 `trimmed[end + 4..]` 按绝对位置切，少偏移 3 导致残留 `---`。
+    // 改为在剥离后的 `rest` 上定位，索引基准一致。
+    if let Some(rest) = trimmed.strip_prefix("---") {
+        if let Some(end) = rest.find("\n---") {
+            return rest[end + 4..].trim_start().to_string();
         }
     }
     md.to_string()
@@ -350,7 +353,7 @@ fn load_skill_content(base: &Path, folder: &str) -> Option<String> {
             .filter(|e| {
                 e.path()
                     .extension()
-                    .map_or(false, |x| x.eq_ignore_ascii_case("md"))
+                    .is_some_and(|x| x.eq_ignore_ascii_case("md"))
             })
             .map(|e| e.path())
             .collect();
@@ -412,7 +415,7 @@ impl Tool for NomifunSkillTool {
         // 真实桥接（可选）：GANYU_NOMIFUN_GATEWAY 形如 `nomifun skill {cap} {input}`
         if let Ok(gw) = std::env::var("GANYU_NOMIFUN_GATEWAY") {
             let cmd = gw
-                .replace("{cap}", &cap.name)
+                .replace("{cap}", cap.name)
                 .replace("{input}", user_input.trim());
             return dispatch_gateway(&cmd).await;
         }
@@ -420,7 +423,7 @@ impl Tool for NomifunSkillTool {
         // 离线（默认，已同步真实内容）：优先读取同步进仓库的真实 SKILL.md 定义；
         // 否则回退到本模块内置的方法论 SOP。
         if let Some(base) = resolve_skills_dir() {
-            if let Some(content) = load_skill_content(&base, folder_for_cap(&cap.name)) {
+            if let Some(content) = load_skill_content(&base, folder_for_cap(cap.name)) {
                 return Ok(Value(format!(
                     "【nomifun 内置能力 · {name}】（已同步真实技能定义）\n\n{content}",
                     name = cap.name,
@@ -535,6 +538,20 @@ mod tests {
     use super::*;
     use crate::core::memory::LocalMemory;
     use std::sync::Arc;
+
+    /// 回归：frontmatter 必须被完整剥离，不得残留 `---`。
+    /// （原实现用 `trimmed[end + 4..]`，`end` 相对 `trimmed[3..]`，少偏移 3。）
+    #[test]
+    fn strip_frontmatter_removes_delimiters_fully() {
+        assert_eq!(strip_frontmatter("---\nname: x\n---\nbody"), "body");
+        assert_eq!(
+            strip_frontmatter("---\nname: x\n---\n# Title\n\nline"),
+            "# Title\n\nline"
+        );
+        // 无 frontmatter / 未闭合 → 原样返回。
+        assert_eq!(strip_frontmatter("no frontmatter"), "no frontmatter");
+        assert_eq!(strip_frontmatter("---\nunclosed"), "---\nunclosed");
+    }
 
     #[test]
     fn catalog_has_no_duplicate_names() {

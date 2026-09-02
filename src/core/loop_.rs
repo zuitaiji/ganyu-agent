@@ -151,6 +151,7 @@ impl Reasoner for LlmReasoner {
 /// 支持两种形式：
 /// - JSON：`{"tool":"x","args":"y"}` 或 OpenAI `function_call` 风格（`name`/`arguments`）；
 /// - 脚本：`@tool arg`。
+///
 /// 返回 `(工具名, 参数)`；无法解析返回 `None`。
 pub fn parse_tool_call(text: &str) -> Option<(String, String)> {
     let t = text.trim();
@@ -208,6 +209,7 @@ fn strip_first_tool_line(msg: &str, line: &str) -> String {
 /// - **多行参数**：`@tool` 行之后、下一个 `@` 行之前的非 `@` 行并入 args
 ///   （file_write/remember 等"首行路径/键 + 内容"工具可直接用）；
 /// - 下一个 `@` 行起（新的工具调用）及之后保留为 remaining，供循环继续执行。
+///
 /// 供 LocalReasoner（离线确定性）与 LlmReasoner（联网强制解析，杜绝模型"假装"执行）共用。
 fn parse_known_tool(user_msg: &str, known: &HashSet<String>) -> Option<(String, String, String)> {
     for line in user_msg.lines() {

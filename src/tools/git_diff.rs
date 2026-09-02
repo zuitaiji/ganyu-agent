@@ -1,6 +1,7 @@
 //! `ganyu tool git-diff` / `ganyu tool pr-diff`：获取 Git diff 用于代码 Review。
 //! - `git-diff` 本地：等价于 `code-review-assistant/scripts/get_diff.py`（全程列表式 subprocess，无 shell）。
 //! - `pr-diff` 远程：等价于 `code-review-assistant/scripts/get_pr_diff.py`（GitHub/GitLab，token 取自参数或环境变量）。
+//!
 //! 远程部分依赖 reqwest，仅在 `network` 特性下启用（与 Rust 凭据基件一致）。
 
 use crate::error::GanyuResult;
@@ -292,10 +293,9 @@ async fn get_github_diff(
         };
         return Err(GanyuError::Http(msg));
     }
-    Ok(resp
-        .text()
+    resp.text()
         .await
-        .map_err(|e| GanyuError::Http(e.to_string()))?)
+        .map_err(|e| GanyuError::Http(e.to_string()))
 }
 
 #[cfg(feature = "network")]
@@ -372,7 +372,7 @@ fn repo_from_remote() -> GanyuResult<(String, String)> {
     // git@github.com:owner/repo.git 或 https://github.com/owner/repo.git
     let re =
         regex::Regex::new(r"(?:git@github\.com:|https://github\.com/)([^/]+)/([^/]+?)(?:\.git)?$")
-            .map_err(|e| GanyuError::Regex(e))?;
+            .map_err(GanyuError::Regex)?;
     if let Some(c) = re.captures(out) {
         return Ok((
             c.get(1)

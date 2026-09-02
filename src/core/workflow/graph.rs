@@ -118,20 +118,11 @@ impl Workflow for GraphWorkflow {
 }
 
 /// 流式构造 Graph 的构建器。
+#[derive(Default)]
 pub struct GraphBuilder {
     nodes: HashMap<String, Node>,
     edges: Vec<(String, String)>,
     end: String,
-}
-
-impl Default for GraphBuilder {
-    fn default() -> Self {
-        GraphBuilder {
-            nodes: HashMap::new(),
-            edges: Vec::new(),
-            end: String::new(),
-        }
-    }
 }
 
 impl GraphBuilder {

@@ -16,7 +16,7 @@ use std::sync::Arc;
 fn build_agent() -> (ganyu_agent::core::Agent, std::path::PathBuf) {
     let mem_path = ".ganyu_it_mem.json";
     let memory: DynMemory = Arc::new(LocalMemory::new(mem_path));
-    let mut gw = Gateway::new();
+    let gw = Gateway::new();
     gw.register(Arc::new(LocalBackend));
     let tools = Arc::new(ToolRegistry::new());
     register_core_tools(&tools, memory.clone());
@@ -49,7 +49,7 @@ fn build_agent() -> (ganyu_agent::core::Agent, std::path::PathBuf) {
 #[tokio::test]
 async fn sag_end_to_end_local() {
     let memory: DynMemory = Arc::new(LocalMemory::new(".ganyu_it_sag.json"));
-    let mut gw = Gateway::new();
+    let gw = Gateway::new();
     gw.register(Arc::new(LocalBackend));
     let skills = Arc::new(SkillBook::new(memory.clone()));
     let mdl = Mdl::load("examples/sample_mdl.json").unwrap();

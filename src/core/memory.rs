@@ -316,7 +316,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 #[cfg(feature = "crypto")]
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     (0..s.len())
@@ -516,13 +516,21 @@ mod tests {
     }
 
     /// 加密测试共享 GANYU_MEM_KEY（进程全局 env），必须串行防竞态。
+    ///
+    /// 用 `tokio::sync::Mutex` 而非 `std::sync::Mutex`：持锁期间会 `await`（异步读写记忆文件），
+    /// std 锁跨 await 会阻塞 runtime 线程，且 poison 后在 `panic = "abort"` 下会拖垮整个测试进程。
     #[cfg(feature = "crypto")]
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static ENV_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+    #[cfg(feature = "crypto")]
+    fn env_lock() -> &'static tokio::sync::Mutex<()> {
+        ENV_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
 
     #[cfg(feature = "crypto")]
     #[tokio::test]
     async fn encrypted_roundtrip() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = env_lock().lock().await;
         // H1：设置密钥后落盘应为密文，且可正确还原。
         std::env::set_var("GANYU_MEM_KEY", "test-passphrase-123");
         let path = ".ganyu_test_enc.json";
@@ -554,7 +562,7 @@ mod tests {
     #[cfg(feature = "crypto")]
     #[tokio::test]
     async fn wrong_key_never_overwrites_encrypted_file() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = env_lock().lock().await;
         // P2：密钥错误时 put 不得把加密记忆库静默覆盖为空库（防永久丢失）。
         let path = ".ganyu_test_wrongkey.json";
         let _ = std::fs::remove_file(path);
@@ -589,7 +597,7 @@ mod tests {
     #[cfg(feature = "crypto")]
     #[tokio::test]
     async fn enc1_backward_compat_readable() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = env_lock().lock().await;
         // R-2 回归：旧格式 ENC1（无盐、单次 SHA-256 派生密钥）必须仍可被解密，
         // 否则旧记忆文件在升级后会变成"密钥正确也读不出"。
         std::env::set_var("GANYU_MEM_KEY", "key-a");

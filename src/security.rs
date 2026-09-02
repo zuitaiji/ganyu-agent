@@ -162,11 +162,11 @@ fn has_prefix(path: &Path, root: &Path) -> bool {
 fn canonicalize_or_create(p: &Path) -> GanyuResult<PathBuf> {
     if p.exists() {
         p.canonicalize()
-            .map_err(|e| GanyuError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))
+            .map_err(|e| GanyuError::Io(std::io::Error::other(e)))
     } else {
         std::fs::create_dir_all(p).map_err(GanyuError::Io)?;
         p.canonicalize()
-            .map_err(|e| GanyuError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))
+            .map_err(|e| GanyuError::Io(std::io::Error::other(e)))
     }
 }
 
@@ -282,6 +282,7 @@ pub fn ssrf_guard(url: &str) -> GanyuResult<()> {
 /// - IPv4-compatible `::a.b.c.d`（RFC 4291 已弃用，部分栈仍支持）；
 /// - 6to4 `2002:V4ADDR::/32`（RFC 3056，隧道可解封装到内网 IPv4）；
 /// - NAT64 `64:ff9b::/96`（RFC 6052，经网关翻译到 IPv4）。
+///
 /// 若命中以上任一前缀则返回解出的 IPv4，供 `is_private_or_reserved` 按 IPv4 规则判断。
 fn embedded_ipv4(v6: &std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
     if let Some(v4) = v6.to_ipv4_mapped() {
@@ -438,7 +439,7 @@ pub fn fence_untrusted(label: &str, content: &str) -> String {
 /// 长度非偶数或含非 hex 字符返回 `None`。
 pub fn decode_hex(s: &str) -> Option<Vec<u8>> {
     let s = s.trim();
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     (0..s.len())

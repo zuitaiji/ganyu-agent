@@ -450,8 +450,8 @@ async fn main() -> GanyuResult<()> {
             // 能力边界矩阵：声明式映射（基于已知 #[cfg(feature)] 注册点），
             // 让用户一眼看清「关掉某特性会少哪些能力」。fail-closed：未启用的特性对应能力标 ❌。
             println!("\n== 能力边界矩阵 ==");
-            println!("  {:<22} {:<14} {}", "能力", "所需特性", "状态");
-            println!("  {:<22} {:<14} {}", "----", "--------", "----");
+            println!("  {:<22} {:<14} 状态", "能力", "所需特性");
+            println!("  {:<22} {:<14} ----", "----", "--------");
             for row in capability_matrix() {
                 let status = if row.enabled {
                     "✅ 启用"
@@ -808,7 +808,7 @@ async fn main() -> GanyuResult<()> {
                 let status = Command::new("tar")
                     .args(["-xzf", tmp.to_str().unwrap(), "-C", &bin_dir])
                     .status()
-                    .map_err(|e| GanyuError::Io(e))?;
+                    .map_err(GanyuError::Io)?;
                 if !status.success() {
                     eprintln!("解压失败。请手动解压 {tmp:?} 到 {bin_dir}");
                     std::process::exit(1);

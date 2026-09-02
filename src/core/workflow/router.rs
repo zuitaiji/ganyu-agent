@@ -2,6 +2,7 @@
 //!
 //! - `Router` trait：纯分类（`route` 返回路由键），可插拔（离线 `KeywordRouter` / 联网 LLM 路由器）。
 //! - `RouterWorkflow`：路由表 `key -> Unit`；命中即用，未命中用 `fallback`。
+//!
 //! 对齐"router-skill"：顶层先分类，再交给专精单元，避免单 agent 什么都做一点。
 
 use std::collections::HashMap;

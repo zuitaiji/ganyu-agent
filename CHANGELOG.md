@@ -7,6 +7,28 @@
 GitHub 侧的 Release Notes 由 `generate_release_notes` 自动生成；
 本文件是仓库内的可读变更历史，按版本倒序排列。
 
+## [v0.1.18]
+
+### 缺陷修复
+
+- **`strip_frontmatter` off-by-3 切片错误**（`src/ext/nomifun_caps.rs`）：
+  剥离 SKILL.md 的 YAML frontmatter 时，先用 `trimmed[3..]` 定位结束标记，
+  却用 `trimmed[end + 4..]` 按绝对位置切片，少偏移 3 导致正文残留 `---` 前缀，
+  技能内容被污染。改用 `strip_prefix` 定位，索引基准一致；新增回归单测覆盖。
+- **`await_holding_lock`**（`src/core/memory.rs`）：加密用例的 env 串行锁用
+  `std::sync::Mutex` 且持锁期间 `await`，会阻塞 runtime 线程，poison 后在
+  `panic = "abort"` 下拖垮整个测试进程。改用 `tokio::sync::Mutex`。
+
+### 工程
+
+- **clippy 存量告警清零**：33 处（含 tests）全部修复。机械项由 `cargo clippy --fix`
+  处理（redundant_closure / manual_is_multiple_of / io::Error::other / needless_borrow /
+  map_or / derivable_impls / let_unit_value 等）；其余人工处理：
+  `LruCache::len` 补 `is_empty`、`PROD_PUBKEY` 按 `sign` 特性门控（其唯一使用点
+  `cmd_seed_check` 同门控）、5 处 `doc_lazy_continuation` 改为独立段落。
+- **`ci.yml` 的 clippy 转为阻断门禁**（`-- -D warnings`）：自 v0.1.18 起 lint 回归直接阻断，
+  防止告警再次累积成债。
+
 ## [v0.1.17]
 
 ### 安全

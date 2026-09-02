@@ -220,7 +220,7 @@ fn gen_role_interaction(out_dir: &str) -> GanyuResult<()> {
     s.push(TAIL.to_string());
 
     let p = format!("{}/role_interaction.svg", out_dir);
-    std::fs::write(&p, s.join("\n")).map_err(|e| crate::error::GanyuError::Io(e))?;
+    std::fs::write(&p, s.join("\n")).map_err(crate::error::GanyuError::Io)?;
     println!("written {p}");
     Ok(())
 }
@@ -450,7 +450,7 @@ fn gen_upload_repo_lane(out_dir: &str) -> GanyuResult<()> {
     s.push(TAIL.to_string());
 
     let p = format!("{}/upload_repo_init_lane.svg", out_dir);
-    std::fs::write(&p, s.join("\n")).map_err(|e| crate::error::GanyuError::Io(e))?;
+    std::fs::write(&p, s.join("\n")).map_err(crate::error::GanyuError::Io)?;
     println!("written {p}");
     Ok(())
 }
@@ -468,7 +468,7 @@ pub fn run(_args: &[String]) -> GanyuResult<()> {
     } else {
         ".".to_string()
     };
-    std::fs::create_dir_all(&out_dir).map_err(|e| crate::error::GanyuError::Io(e))?;
+    std::fs::create_dir_all(&out_dir).map_err(crate::error::GanyuError::Io)?;
     gen_role_interaction(&out_dir)?;
     gen_upload_repo_lane(&out_dir)?;
     Ok(())

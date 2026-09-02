@@ -55,13 +55,12 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
-      # Lint 报告（当前为「只报告不阻断」）：
-      # 存量告警 23 处（doc_lazy_continuation / redundant_closure / manual_is_multiple_of 等），
-      # 均属机械可修的低风险项，但分布在 9 个与本次改动无关的文件中。
-      # 为避免门禁上线即全红、也避免为过门禁而大范围改动无关代码，先以报告模式运行；
-      # 待专项清理这 23 处后，追加 `-D warnings` 转为阻断门禁。
-      - name: Clippy (report-only)
-        run: cargo clippy --all-targets --features hardened
+      # Lint 阻断门禁（v0.1.18 起）：存量 33 处告警已在专项清理中归零，
+      # 其中 `nomifun_caps.rs` 的 manual_strip 实为 off-by-3 切片 bug、
+      # `memory.rs` 的 await_holding_lock 为常驻进程 panic 同源问题，均已修复并补测。
+      # 自此 lint 回归即阻断，防止告警再次累积成债。
+      - name: Clippy (blocking)
+        run: cargo clippy --all-targets --features hardened -- -D warnings
 
       - name: Test
         run: cargo test --features hardened

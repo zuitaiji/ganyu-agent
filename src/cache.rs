@@ -96,6 +96,10 @@ where
         self.map.lock().unwrap().len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn clear(&self) {
         self.map.lock().unwrap().clear();
         self.order.lock().unwrap().clear();
