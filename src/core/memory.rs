@@ -169,7 +169,11 @@ impl Memory for LocalMemory {
         }
         // score 为 f64；理论上 NaN 会使 partial_cmp 返回 None，在 `panic = "abort"` 的常驻进程下
         // 任一 unwrap 失败都会拖垮整个 agent。NaN 视为相等（不翻转顺序），消除该 panic 面。
-        hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         hits.truncate(5);
         Ok(hits)
     }
