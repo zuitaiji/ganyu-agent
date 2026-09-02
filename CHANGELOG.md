@@ -7,6 +7,15 @@
 GitHub 侧的 Release Notes 由 `generate_release_notes` 自动生成；
 本文件是仓库内的可读变更历史，按版本倒序排列。
 
+## [v0.1.20]
+
+### 文档与安全（v0.1.19 发布后补齐的 main 提交，本版本一并带入发布）
+- `docs/architecture.md` 刷新至 v0.1.19：补 `.github/workflows/ci.yml` 与 `src/gateway/`（512 行）模块树、§6 双工作流分工、§8 L3 网关「已落地」、真实规模 42 文件 / 10675 行。
+- `docs/SECURITY-REPORT.md` 补 HTTP Webhook 桥接端点攻击面（v0.1.17 新攻击面）：§1.1 专项威胁子节、§3 R-10（High→Low，fail-closed 降级）、§5 残余接受（明文 HTTP 交 TLS 反向代理）。
+
+### 缺陷修复
+- `core/memory.rs`：`search()` 按 f64 score 排序的 `partial_cmp().unwrap()` 在 NaN 时理论 panic，在 `panic = "abort"` 常驻进程下会拖垮整个 agent；改 `unwrap_or(Ordering::Equal)`（与 v0.1.17 gateway 治理同源）。核实：memory.rs 共 21 处 unwrap，20 处在 `#[cfg(test)]` 断言（保留），生产路径仅此 1 处。
+
 ## [v0.1.19]
 
 ### 测试
