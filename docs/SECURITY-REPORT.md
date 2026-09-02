@@ -1,7 +1,7 @@
 # ganyu-agent 安全评估报告（第二阶段：加固落地）
 
 > 版本：v0.1.x 安全加固（对应 `feat(security): hardened phase-2`）
-> 范围：在 F-01~F-14 基线审查与修复**已完成**的基础上，针对新增/残余风险 R-1~R-9 做威胁建模、加固实现与残余风险接受。
+> 范围：在 F-01~F-14 基线审查与修复**已完成**的基础上，针对新增/残余风险 R-1~R-10 做威胁建模、加固实现与残余风险接受。
 > 方法：STRIDE 威胁建模 + 源码核验（security.rs / memory.rs / config.rs / main.rs）+ `cargo test --features hardened` 验证。
 > 结论：基线 F-01~F-14 **全部闭环生效**（非纸面）；本阶段按既定范围完成了记忆加密强化（R-2/HARD-1）、自更新签名校验（R-1）、tar 穿越补强（R-5/HARD-2）、死代码清理（R-7/HARD-3）。R-3/R-4/R-6/R-8/R-9 作为**已记录、已接受的残余风险**留存，附后续改造建议。
 
@@ -35,6 +35,21 @@
 | **E** EoP | 提权 / 沙箱逃逸 | `sandbox`（Landlock, Linux）；`shell` 双层关；插件 `vetted`+allowlist+`is_safe_program`；`cap=` 首行独占（F-07）；SSRF；FS 沙箱 | tar 解包穿越已补（R-5）；Windows 无 Landlock（跨平台靠 C3/C4 文件沙箱） | 低 |
 
 **结论**：STRIDE 六类均已有对应控制，无 Critical/High 级残余。新增的 R-1 签名校验把"自更新供应链"从"仅防传输篡改"升级到"防发布方被接管"。
+
+### 1.1 HTTP Webhook 桥接端点威胁（v0.1.17 新增攻击面）
+
+`gateway start` 除 Telegram 外起一个 HTTP 桥接（`POST /message`，默认 `127.0.0.1:8080`），供外部系统把消息推给 agent。
+**该端点直接触发 agent 的全部工具权限**（hardened 下含 shell / 文件 / MCP），因此它本身就是一个高价值的远程身份冒用与命令执行面——v0.1.17 前完全无鉴权、无 body 上限。
+
+| STRIDE | 风险 | 现有控制（v0.1.17 加固） | 残余风险 | 评级 |
+|--------|------|--------------------------|----------|------|
+| **S** Spoofing | 未授权方以 `POST /message` 冒用为"用户"触发 agent 执行 shell/文件 | 非回环绑定 + 无 token → `gateway start` **拒绝启动**（fail-closed）；配 token 后要求 `Authorization: Bearer <token>`，否则 `401` | 回环默认放行（本地单用户模型内可接受） | Low（fail-closed 后） |
+| **T** Tampering | 明文 HTTP 下请求/响应被中间人篡改 | 无传输加密；**TLS 终结交由反向代理**（nginx/Caddy），不直接暴露非回环绑定到公网 | 明文传输（R-10） | Low（建议内网/代理后） |
+| **R** Repudiation | 桥接请求无独立审计字段 | 复用 `observe::AuditLog` 主流程 | 同主流程限制 | 低 |
+| **I** Info Disclosure | 响应含 agent 回复/工具输出经明文泄露；token 在配置文件中 | token 经 `restrict_file_permissions` 收紧（R-8）；响应不含密钥回显 | 明文通道泄露（R-10） | Low |
+| **D** DoS | 大 body / 请求洪泛撑爆入队或挂起表 | 请求体上限 `64 KiB`（`DefaultBodyLimit`，超限 `413`）；agent 超时 `120s` → `504` 并清理 pending，防无界增长 | 洪泛仍可达（无应用层限速） | Low |
+
+> 设计原则：**agent 能力的执行面不应因"加了网关"而扩大**。`fail-closed` 保证"要么鉴权、要么不启动"，而非"先跑起来再说"。
 
 ---
 
@@ -72,6 +87,7 @@
 | R-7 | 死代码 `load_model_config()` 仍含全局 `set_var("OPENAI_API_BASE/MODEL")` | Low | **已清理**：删除函数，消除潜在全局 env 泄漏面 | `config.rs`（已移除） |
 | R-8 | `write_model_config` 仅在 unix 收紧 0600，Windows 未做等价 ACL 收紧 | Info | **已加固**：跨平台 `security::restrict_file_permissions`（unix 0600 / Windows `icacls` 限属主），config + gateway token 写入后调用 | `security.rs` / `config.rs` |
 | R-9 | Windows 下记忆/配置目录未做等价权限隔离 | Info | **已加固**：记忆加密文件 `save` 写临时文件后 `restrict_file_permissions` 再 rename | `core/memory.rs::save` |
+| R-10 | HTTP 桥接 `POST /message` 无鉴权/无上限，未授权方可触发 agent 执行 shell/文件（v0.1.17 前 0 控制） | High→Low | **已加固（fail-closed）**：非回环绑定无 `GANYU_HTTP_TOKEN` 则拒绝启动；配 token 后 `Bearer` 校验否则 `401`；body 上限 `64 KiB`（413）；120s 超时 `504` 并清理 pending；默认回环放行 | `src/gateway/http_bridge.rs`（`new()` fail-closed + `authorized` + `DefaultBodyLimit`）、`src/config.rs`（`is_loopback_bind` / `GANYU_HTTP_TOKEN` / `security_baseline` 告警） |
 
 ---
 
@@ -121,6 +137,7 @@
 |----|----------|--------------------|
 | R-3 | 默认 OV 为本地 `:1933`，不出公网；失败自动降级本地 | 生产在 OV 前加 TLS 反向代理 / 限定内网 |
 | R-4 | 已由 F-10 收敛到单点进程 env，无全局泄漏 | 用 OS 密钥环/KMS 注入原始 32B 密钥，替换 `from_env` |
+| R-10 | 桥接仅明文 HTTP，无传输加密；非回环绑定 + token 已是 High→Low，但明文通道仍可能泄露 token/响应 | 生产在桥接前加 TLS 反向代理（nginx/Caddy）；**绝不**将非回环绑定直连公网；token 走环境变量或受限配置文件 |
 
 > R-6（黑板字节上限）、R-8/R-9（Windows 文件权限）已于**第三阶段加固**闭环，见 §4.5。
 
