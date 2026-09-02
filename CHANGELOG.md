@@ -7,6 +7,24 @@
 GitHub 侧的 Release Notes 由 `generate_release_notes` 自动生成；
 本文件是仓库内的可读变更历史，按版本倒序排列。
 
+## [v0.1.19]
+
+### 测试
+
+此前 `src/tools/`（912 行）零单测、`src/routing/` 仅 3 个单测，补全 11 个，覆盖此前裸露的关键路径：
+
+- **`src/tools/diagram.rs`（4 个）**
+  - `esc` 的 XML 转义与**顺序不变量**：`&` 必须先转义，否则 `&lt;` 会被二次转义成 `&amp;lt;`；
+    注入载荷 `</text><script>` 转义后不得残留裸 `<` / `>`（SVG 是 XML，未转义即注入）。
+  - `box_node` 多行标签逐行生成 `text`、`bold` 仅影响 `font-weight`。
+  - `edge` 的虚线开关与空标签不生成元素。
+  - 端到端：生成的两个 SVG 须声明命名空间、闭合、`<svg>` 标签配对。
+- **`src/tools/git_diff.rs`（2 个）**：GitHub / GitLab 的 PR 链接解析逐字段断言，
+  并覆盖反向用例（issues 链接、裸仓库、跨平台链接不得互配）。
+- **`src/routing/mod.rs`（5 个）**：熔断达阈值后不再调用失效后端（此前完全未覆盖）、
+  全后端失败返回聚合错误、`local` 兜底后端排序永远在真模型之后、
+  模型输出在出口净化（NUL 与控制字符）、超 1 MiB 输出被拒绝。
+
 ## [v0.1.18]
 
 ### 缺陷修复

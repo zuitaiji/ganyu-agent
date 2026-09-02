@@ -473,3 +473,80 @@ pub fn run(_args: &[String]) -> GanyuResult<()> {
     gen_upload_repo_lane(&out_dir)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 安全不变量：SVG 是 XML，标签文本未转义会导致注入（写入可执行标记）。
+    #[test]
+    fn esc_neutralizes_xml_metacharacters() {
+        assert_eq!(esc("a<b>c"), "a&lt;b&gt;c");
+        assert_eq!(esc("a & b"), "a &amp; b");
+        // 顺序不变量：`&` 必须先转义，否则 `&lt;` 里的 `&` 会被二次转义成 `&amp;lt;`。
+        assert_eq!(esc("<"), "&lt;");
+        assert!(!esc("<").contains("&amp;"), "不得产生二次转义");
+        assert_eq!(esc("a<b&c>d"), "a&lt;b&amp;c&gt;d");
+        // 注入载荷：转义后不得残留裸 `<`。
+        let payload = "</text><script>alert(1)</script>";
+        assert!(!esc(payload).contains('<'));
+        assert!(!esc(payload).contains('>'));
+    }
+
+    #[test]
+    fn box_node_renders_one_text_per_line() {
+        let svg = box_node(
+            0.0, 0.0, 100.0, 40.0, "a\nb\nc", "#fff", "#000", 12.0, false,
+        );
+        assert_eq!(
+            svg.matches("<text ").count(),
+            3,
+            "三行标签 → 三个 text 元素"
+        );
+        assert!(svg.starts_with("<rect "));
+        assert!(svg.contains("rx=\"8\""));
+        // bold 参数只影响 text 的 font-weight。
+        assert!(!svg.contains("font-weight:bold;"));
+        let bold = box_node(0.0, 0.0, 100.0, 40.0, "x", "#fff", "#000", 12.0, true);
+        assert!(bold.contains("font-weight:bold;"));
+    }
+
+    #[test]
+    fn edge_emits_label_and_dash_only_when_requested() {
+        let plain = edge(0.0, 0.0, 10.0, 10.0, "", "#000", false);
+        assert!(plain.starts_with("<line "));
+        assert!(plain.contains("marker-end=\"url(#arrow)\""));
+        assert!(
+            !plain.contains("stroke-dasharray"),
+            "未要求虚线时不该有 dash"
+        );
+        assert_eq!(plain.matches("<text ").count(), 0, "空标签不生成 text");
+
+        let dashed = edge(0.0, 0.0, 10.0, 10.0, "", "#000", true);
+        assert!(dashed.contains("stroke-dasharray=\"6,4\""));
+
+        let labelled = edge(0.0, 0.0, 10.0, 10.0, "调用", "#f00", false);
+        assert_eq!(labelled.matches("<text ").count(), 1);
+        assert!(labelled.contains("#f00"), "标签用边的颜色");
+    }
+
+    /// 端到端：生成的两个 SVG 须闭合、声明命名空间、且不含未转义的裸 `<`（除标记本身）。
+    #[test]
+    fn generated_diagrams_are_well_formed() {
+        let dir = std::env::temp_dir().join("ganyu_diagram_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.to_string_lossy().to_string();
+        run(std::slice::from_ref(&out)).unwrap();
+        for name in ["role_interaction.svg", "upload_repo_init_lane.svg"] {
+            let content = std::fs::read_to_string(dir.join(name)).unwrap();
+            assert!(content.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\""));
+            assert!(content.trim_end().ends_with("</svg>"), "{name} 未闭合");
+            assert_eq!(
+                content.matches("<svg").count(),
+                content.matches("</svg>").count(),
+                "{name} 标签不配对"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

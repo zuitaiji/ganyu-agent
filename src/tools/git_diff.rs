@@ -396,3 +396,53 @@ pub async fn run_remote(_args: &[String]) -> GanyuResult<()> {
         "pr-diff 需要 network 特性，请用 --features network/hardened 编译。".into(),
     ))
 }
+
+#[cfg(all(test, feature = "network"))]
+mod tests {
+    use super::*;
+
+    /// GitHub / GitLab 的 PR 链接 → (host, owner/repo, 编号)。
+    /// 解析错会把 diff 请求打向错误的 API 路径，故逐字段断言。
+    #[test]
+    fn parses_github_pr_url() {
+        assert_eq!(
+            parse_github_url("https://github.com/zuitaiji/ganyu-agent/pull/42"),
+            Some(("zuitaiji".into(), "ganyu-agent".into(), "42".to_string()))
+        );
+        // 带查询串 / 尾斜杠的真实粘贴形态。
+        assert_eq!(
+            parse_github_url("https://github.com/o/r/pull/7?diff=split"),
+            Some(("o".into(), "r".into(), "7".to_string()))
+        );
+        // 非 PR 链接（issues / 裸仓库）不得误判。
+        assert_eq!(parse_github_url("https://github.com/o/r/issues/7"), None);
+        assert_eq!(parse_github_url("https://github.com/o/r"), None);
+        assert_eq!(
+            parse_github_url("https://gitlab.com/o/r/-/merge_requests/1"),
+            None
+        );
+    }
+
+    #[test]
+    fn parses_gitlab_mr_url() {
+        // 自托管 GitLab：host 需还原为完整 URL，路径拼成 `owner/repo`。
+        assert_eq!(
+            parse_gitlab_url("https://gitlab.example.com/group/proj/-/merge_requests/15"),
+            Some((
+                "https://gitlab.example.com".into(),
+                "group/proj".into(),
+                "15".to_string()
+            ))
+        );
+        assert_eq!(
+            parse_gitlab_url("https://gitlab.com/o/r/-/merge_requests/1"),
+            Some(("https://gitlab.com".into(), "o/r".into(), "1".to_string()))
+        );
+        assert_eq!(parse_gitlab_url("https://gitlab.com/o/r"), None);
+        assert_eq!(
+            parse_gitlab_url("https://github.com/o/r/pull/1"),
+            None,
+            "GitHub 链接不得被 GitLab 解析器匹配"
+        );
+    }
+}

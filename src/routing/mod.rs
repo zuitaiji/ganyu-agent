@@ -324,4 +324,106 @@ mod tests {
             "第二次应命中 LLM 缓存"
         );
     }
+
+    /// 熔断：连续失败达阈值后，后端应被跳过而不再被调用（避免对已挂的后端持续洪泛）。
+    struct CountingFailBackend {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+    #[async_trait]
+    impl LlmBackend for CountingFailBackend {
+        fn name(&self) -> &str {
+            "flaky"
+        }
+        async fn complete(&self, _: &[Message]) -> GanyuResult<Value> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(GanyuError::BackendUnavailable("flaky".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn circuit_breaker_stops_calling_failed_backend() {
+        let g = Gateway::new();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        g.register(Arc::new(CountingFailBackend {
+            calls: calls.clone(),
+        }));
+        // 阈值为 3：前 3 次真实调用并失败，熔断器随之打开。
+        for _ in 0..3 {
+            assert!(g.complete(&[Message::user("hi")]).await.is_err());
+        }
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+        // 第 4 次：熔断器已开，后端不应再被调用。
+        assert!(g.complete(&[Message::user("hi")]).await.is_err());
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            3,
+            "熔断后不得继续调用已失效后端"
+        );
+    }
+
+    #[tokio::test]
+    async fn all_backends_failing_reports_aggregate_error() {
+        let g = Gateway::new();
+        g.register(Arc::new(FailBackend));
+        let r = g.complete(&[Message::user("hi")]).await;
+        assert!(
+            matches!(r, Err(GanyuError::AllBackendsFailed(_))),
+            "无可用后端时应返回聚合错误，而非静默"
+        );
+    }
+
+    /// lkgp 排序不变量：本地兜底后端永远排在真模型之后（真模型优先）。
+    struct LocalBackend;
+    #[async_trait]
+    impl LlmBackend for LocalBackend {
+        fn name(&self) -> &str {
+            "local"
+        }
+        async fn complete(&self, _: &[Message]) -> GanyuResult<Value> {
+            Ok(Value("local".into()))
+        }
+    }
+
+    #[test]
+    fn local_backend_is_ordered_last() {
+        let g = Gateway::new();
+        // 有意让 local 先注册：排序后仍须落到末尾。
+        g.register(Arc::new(LocalBackend));
+        g.register(Arc::new(OkBackend));
+        assert_eq!(g.ordered_names(), vec!["ok".to_string(), "local".into()]);
+    }
+
+    /// M5 出口净化：模型输出是信任边界，NUL 与控制字符须被剥离。
+    struct RawBackend(&'static str);
+    #[async_trait]
+    impl LlmBackend for RawBackend {
+        fn name(&self) -> &str {
+            "raw"
+        }
+        async fn complete(&self, _: &[Message]) -> GanyuResult<Value> {
+            Ok(Value(self.0.to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn model_output_is_sanitized_at_the_gateway() {
+        let g = Gateway::new();
+        g.register(Arc::new(RawBackend("a\0b\u{7}c")));
+        let out = g.complete(&[Message::user("hi")]).await.unwrap();
+        assert_eq!(out, Value("abc".into()), "NUL 与控制字符应被剥离");
+    }
+
+    #[tokio::test]
+    async fn oversized_model_output_is_rejected() {
+        let g = Gateway::new();
+        // 超过 sanitize_model_output 的 1 MiB 上限。
+        let huge = "x".repeat(1_000_001);
+        let huge: &'static str = Box::leak(huge.into_boxed_str());
+        g.register(Arc::new(RawBackend(huge)));
+        let r = g.complete(&[Message::user("hi")]).await;
+        assert!(
+            matches!(r, Err(GanyuError::Forbidden(_))),
+            "超长输出应被拒绝，而非透传给下游"
+        );
+    }
 }
