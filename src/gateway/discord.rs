@@ -6,6 +6,9 @@
 //!
 //! 不回放历史：首次启动先「置位」游标到当前最新消息 id，仅处理其后新到的消息
 //!（对齐 Telegram `getUpdates` 不回放行为）。分页 `after` 走最旧方向确保高吞吐频道不丢消息。
+//! 跳过 bot / webhook 消息（`author.bot` 或 `webhook_id`）——本适配器自己的回复同样会进入
+//! 频道历史，不过滤会形成「回复自己 → 再读回 → 再回复」的自激循环；与 SlackAdapter 的
+//! `bot_id` 过滤是同一取舍（见技术规格 §6）。
 //! 失败时打印并退避后返回空（自愈），不向上抛错打断网关。
 
 use std::collections::HashMap;
@@ -211,6 +214,13 @@ fn parse_discord_messages(value: &serde_json::Value) -> Vec<(u64, InboundMessage
         if chat_id.is_empty() {
             continue;
         }
+        // 跳过 bot / webhook 消息：本适配器自己的回复同样会进入频道历史
+        //（经 Bot token 发出的消息其 author 带 bot=true），不跳过会形成
+        //「回复自己 → 再读回 → 再回复」的自激循环。与 SlackAdapter 的 bot_id
+        // 过滤是同一取舍（见技术规格 §6），Discord 侧标识为 author.bot / webhook_id。
+        if m["author"]["bot"] == serde_json::Value::Bool(true) || m.get("webhook_id").is_some() {
+            continue;
+        }
         let user = m["author"]["username"]
             .as_str()
             .or_else(|| m["author"]["global_name"].as_str())
@@ -271,6 +281,22 @@ mod tests {
             { "id": "2", "channel_id": "5", "author": { "username": "y" }, "content": "  " }
         ]);
         assert!(parse_discord_messages(&json).is_empty());
+    }
+
+    /// 跳过 bot / webhook 消息，但保留真人消息：本适配器自己的回复带 `bot=true`，
+    /// 不过滤会自激循环；同时必须确认 `bot=false` 的真人消息不被误杀。
+    #[test]
+    fn parse_skips_bot_and_webhook() {
+        let json = serde_json::json!([
+            { "id": "10", "channel_id": "5", "author": { "username": "self", "bot": true }, "content": "echo" },
+            { "id": "11", "channel_id": "5", "author": { "username": "hook" }, "webhook_id": "9", "content": "via webhook" },
+            { "id": "12", "channel_id": "5", "author": { "username": "human", "bot": false }, "content": "real" }
+        ]);
+        let pairs = parse_discord_messages(&json);
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0, 12);
+        assert_eq!(pairs[0].1.user, "human");
+        assert_eq!(pairs[0].1.text, "real");
     }
 
     /// 构造器与名称不变量。

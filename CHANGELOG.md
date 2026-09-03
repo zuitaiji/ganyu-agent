@@ -7,6 +7,20 @@
 GitHub 侧的 Release Notes 由 `generate_release_notes` 自动生成；
 本文件是仓库内的可读变更历史，按版本倒序排列。
 
+## [v0.1.23]
+
+### 修复（网关自激循环一致性收口）
+- `DiscordAdapter` 补齐 bot 消息过滤：跳过 `author.bot = true` 或带 `webhook_id` 的消息。
+  本适配器经 Bot token 发出的回复同样会进入频道历史，此前不过滤会形成
+  「回复自己 → 再读回 → 再回复」的自激循环。
+- 与 v0.1.22 `SlackAdapter` 的 `bot_id` 过滤构成同一取舍，至此两个平台行为一致，
+  技术规格 §6 记录的遗留项已收口。
+- 测试：新增 `parse_skips_bot_and_webhook`，验证 bot 与 webhook 消息被过滤的同时，
+  `bot: false` 的真人消息不被误杀（仅断言"结果为空"会漏掉后者）。
+
+### 说明
+- 版本 `0.1.22` → `0.1.23`，无新增依赖。
+
 ## [v0.1.22]
 
 ### 新功能（L3 生态兼容：补齐技术规格选项 B 的另一半——Slack）
