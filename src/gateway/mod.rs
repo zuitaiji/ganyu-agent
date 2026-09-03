@@ -104,12 +104,16 @@ mod discord;
 #[cfg(feature = "network")]
 mod http_bridge;
 #[cfg(feature = "network")]
+mod slack;
+#[cfg(feature = "network")]
 mod telegram;
 
 #[cfg(feature = "network")]
 pub use discord::DiscordAdapter;
 #[cfg(feature = "network")]
 pub use http_bridge::HttpBridge;
+#[cfg(feature = "network")]
+pub use slack::SlackAdapter;
 #[cfg(feature = "network")]
 pub use telegram::TelegramAdapter;
 
@@ -129,6 +133,16 @@ pub async fn build_adapters(cfg: &crate::config::GanyuConfig) -> Vec<Box<dyn Pla
                 std::time::Duration::from_secs(2),
             )));
             println!("[gateway] 已装配 Discord 适配器（{} 频道）", channels.len());
+        }
+    }
+    if let (Some(token), Some(channels)) = crate::config::read_gateway_slack() {
+        if !channels.is_empty() {
+            adapters.push(Box::new(SlackAdapter::new(
+                &token,
+                channels.clone(),
+                std::time::Duration::from_secs(2),
+            )));
+            println!("[gateway] 已装配 Slack 适配器（{} 频道）", channels.len());
         }
     }
     if let Some(bind) = &cfg.http_bind {

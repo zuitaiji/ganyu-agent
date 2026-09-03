@@ -198,6 +198,53 @@ pub fn read_gateway_discord_channels() -> Option<Vec<String>> {
     read_gateway_discord().1
 }
 
+/// 读取 [gateway] 段的 Slack 配置：bot token + 监控频道 ID 列表。
+/// 两者同属 `[gateway]` 段，一次解析避免重复读文件与结构体重复定义。
+pub fn read_gateway_slack() -> (Option<String>, Option<Vec<String>>) {
+    let Some(path) = config_path() else {
+        return (None, None);
+    };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return (None, None);
+    };
+    #[derive(serde::Deserialize)]
+    struct FileCfg {
+        #[serde(default)]
+        gateway: Option<SlackGatewayCfg>,
+    }
+    #[derive(serde::Deserialize)]
+    struct SlackGatewayCfg {
+        slack_token: Option<String>,
+        slack_channels: Option<Vec<String>>,
+    }
+    let Ok(parsed) = toml::from_str::<FileCfg>(&text) else {
+        return (None, None);
+    };
+    let Some(gw) = parsed.gateway else {
+        return (None, None);
+    };
+    let token = gw.slack_token.filter(|s| !s.trim().is_empty());
+    let channels = gw
+        .slack_channels
+        .map(|v| {
+            v.into_iter()
+                .filter(|s| !s.trim().is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|v: &Vec<String>| !v.is_empty());
+    (token, channels)
+}
+
+/// 读取 [gateway] 段的 Slack bot token（`ganyu gateway start` 用）。
+pub fn read_gateway_slack_token() -> Option<String> {
+    read_gateway_slack().0
+}
+
+/// 读取 [gateway] 段的 Slack 监控频道 ID 列表（非空才启用适配器）。
+pub fn read_gateway_slack_channels() -> Option<Vec<String>> {
+    read_gateway_slack().1
+}
+
 /// 写入 [gateway] 段（`ganyu gateway setup` 用）。保留其他段。
 pub fn write_gateway_token(token: &str) -> crate::GanyuResult<()> {
     let path = config_path().ok_or_else(|| {

@@ -45,8 +45,9 @@ pub async fn run_adapter(adapter: Box<dyn PlatformAdapter>, deps: GatewayDeps) -
 | `TelegramAdapter` | `gateway/telegram.rs` | 裸 `reqwest` 调 Bot API | `getUpdates` 长轮询（timeout=25s）+ `sendMessage`，零 SDK |
 | `HttpBridge` | `gateway/http_bridge.rs` | axum 本地端点 `POST /message` | 请求/响应桥接：入队 → 挂起 oneshot（120s）→ `send()` 回送 HTTP 响应 |
 | `DiscordAdapter` | `gateway/discord.rs` | 裸 `reqwest` 调 Discord REST API | `GET /channels/{id}/messages?after=` 轮询 + `POST` 发送，鉴权 `Bot <token>`；不回放历史（首次置位游标），分页走最旧方向防 >100 漏消息，2s 空闲节流 |
+| `SlackAdapter` | `gateway/slack.rs` | 裸 `reqwest` 调 Slack Web API | `GET /conversations.history?channel=&oldest=` 轮询 + `POST /chat.postMessage`，鉴权 `Bearer <token>`；不回放历史（首次置位游标），分页跟随 `next_cursor` 直至 `has_more=false`，显式判别 `ok:false`（Slack 错误返回 HTTP 200），跳过 `bot_id` 消息防自激循环，`chat_id` 由查询频道注入（响应体不含该字段），2s 空闲节流 |
 
-三者均在 `#[cfg(feature = "network")]` 下编译。
+四者均在 `#[cfg(feature = "network")]` 下编译。
 
 ### 3.3 `main.rs` 改造
 
@@ -115,7 +116,13 @@ L2 Pi `settings.json` 亦可叠加 `http_bind` / `http_token`。
 
 首平台之后的**第三平台 `DiscordAdapter`（选项 B）已在 v0.1.21 采纳落地**：同样零 SDK、裸 `reqwest`
 调 Discord REST，复用已验证的 `PlatformAdapter` 抽象与 `run_adapter` 驱动模型，无需新增依赖。
+**第四平台 `SlackAdapter`（选项 B 的另一半）已在 v0.1.22 补齐**，同样零 SDK、无新依赖；
+至此技术规格的选项 B（Discord/Slack）已全部落地。
 "仅重构单平台"（选项 C）仍不采纳——抽象已就位，新增平台仅需实现 trait。
+
+> 已知取舍：`SlackAdapter` 跳过带 `bot_id` 的消息，以阻断「回复自己 → 再被读回 → 再回复」
+> 的自激循环（Slack 会把本 bot 发出的消息一并返回在 `conversations.history` 中）。
+> `DiscordAdapter` 目前未做同类过滤，存在相同潜在面，留作后续一致性收口项。
 
 ## 7. 验收标准（已达成）
 

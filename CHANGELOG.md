@@ -7,6 +7,33 @@
 GitHub 侧的 Release Notes 由 `generate_release_notes` 自动生成；
 本文件是仓库内的可读变更历史，按版本倒序排列。
 
+## [v0.1.22]
+
+### 新功能（L3 生态兼容：补齐技术规格选项 B 的另一半——Slack）
+- 新增 `src/gateway/slack.rs`：`SlackAdapter` 实现 `PlatformAdapter`。零 SDK，裸 `reqwest`
+  调 Slack Web API：
+  - 接收用 `GET /conversations.history?channel=&oldest=` REST 轮询，复用 `poll()` 拉取模型；
+  - 发送用 `POST /chat.postMessage`，鉴权 `Authorization: Bearer <token>`。
+- 不回放历史：首次启动先「置位」游标到当前最新消息 ts，仅处理其后新到的消息。
+- 分页跟随 `response_metadata.next_cursor` 直至 `has_more=false`，确保高吞吐频道不丢消息。
+- 显式判别 `ok:false`：Slack 的 API 错误返回 **HTTP 200 + `{"ok":false,"error":...}`**，
+  仅靠 `error_for_status()` 判别不到，会把错误体当成空消息吞掉。
+- 跳过 `bot_id` 消息：Slack 会把本 bot 发出的回复一并返回在历史中，不过滤会形成
+  「回复自己 → 再读回 → 再回复」的自激循环。
+- `chat_id` 由查询频道注入：Slack 响应体**不含**每条消息的频道字段（不同于 Discord 的
+  `channel_id`），不注入则回复无法路由回原频道。
+- 空闲（无新消息）轮询间隔 2s 节流；单次 `poll`/`send` 失败仅打印并退避重试（自愈），
+  不拖垮常驻网关进程（`panic = "abort"` 下的常驻安全）。
+- `config.rs` 新增 `read_gateway_slack()`（+ `read_gateway_slack_token/channels` 包装），
+  读取 `[gateway] slack_token` / `slack_channels`（与 Discord 同模式，不入 `GanyuConfig` 结构体）。
+- `build_adapters()` 在 `network` 特性下装配 Slack 适配器（fail-closed：缺 token 或频道则跳过）；
+  `capability_matrix()` 新增 `gateway:slack` 行。
+- 测试：`parse_slack_messages_maps_fields` / `parse_skips_bot_and_empty` /
+  `parse_handles_error_payload` / `new_builds_with_name` 共 4 个单测。
+
+### 说明
+- 版本 `0.1.21` → `0.1.22`，无新增依赖（`Cargo.lock` 经 `cargo metadata` 重生，仅 root 版本变化）。
+
 ## [v0.1.21]
 
 ### 新功能（L3 生态兼容：补齐技术规格里推迟的「选项 B」）
