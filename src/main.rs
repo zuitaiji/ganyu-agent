@@ -1310,6 +1310,15 @@ fn capability_matrix() -> Vec<CapabilityRow> {
                 && ganyu_agent::config::read_gateway_http_bind().is_some(),
             source: "adapter",
         },
+        CapabilityRow {
+            name: "gateway:discord",
+            module: "gateway/discord",
+            feature: "network + [gateway] discord_token + discord_channels",
+            enabled: cfg!(feature = "network")
+                && ganyu_agent::config::read_gateway_discord_token().is_some()
+                && ganyu_agent::config::read_gateway_discord_channels().is_some(),
+            source: "adapter",
+        },
     ]
 }
 

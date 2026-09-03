@@ -7,6 +7,25 @@
 GitHub 侧的 Release Notes 由 `generate_release_notes` 自动生成；
 本文件是仓库内的可读变更历史，按版本倒序排列。
 
+## [v0.1.21]
+
+### 新功能（L3 生态兼容：补齐技术规格里推迟的「选项 B」）
+- 新增 `src/gateway/discord.rs`：`DiscordAdapter` 实现 `PlatformAdapter`，补齐技术规格里
+  推迟的 Discord/Slack 选项 B。零 SDK，裸 `reqwest` 调 Discord REST API：
+  - 接收用 `GET /channels/{id}/messages?after=...` REST 轮询，复用 `poll()` 拉取模型；
+  - 发送用 `POST /channels/{id}/messages`，鉴权 `Authorization: Bot <token>`。
+- 不回放历史：首次启动先「置位」游标到当前最新消息 id，仅处理其后新到的消息
+  （对齐 Telegram `getUpdates` 不回放行为）。
+- 分页 `after` 走最旧方向翻页，确保单轮 >100 条新消息的高吞吐频道不丢消息。
+- 空闲（无新消息）轮询间隔 2s 节流，避免对 Discord REST 触发限流；
+  单次 `poll`/`send` 失败仅打印并退避重试（自愈），不拖垮常驻网关进程。
+- `config.rs` 新增 `read_gateway_discord()`（+ `read_gateway_discord_token/channels` 包装），
+  读取 `[gateway] discord_token` / `discord_channels`（与 Telegram 同模式，不入 `GanyuConfig` 结构体以免 dead_code）。
+- `build_adapters()` 在 `network` 特性下装配 Discord 适配器（fail-closed：缺 token 或频道则跳过）；
+  `capability_matrix()` 新增 `gateway:discord` 行。
+- 测试：`parse_discord_messages_maps_fields` / `parse_skips_empty_content` / `new_builds_with_name`
+  共 3 个单测；`InboundMessage` 加 `#[derive(Clone)]` 供分页收集复用。
+
 ## [v0.1.20]
 
 ### 文档与安全（v0.1.19 发布后补齐的 main 提交，本版本一并带入发布）

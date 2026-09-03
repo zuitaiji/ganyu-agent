@@ -44,8 +44,9 @@ pub async fn run_adapter(adapter: Box<dyn PlatformAdapter>, deps: GatewayDeps) -
 |--------|------|------|------|
 | `TelegramAdapter` | `gateway/telegram.rs` | 裸 `reqwest` 调 Bot API | `getUpdates` 长轮询（timeout=25s）+ `sendMessage`，零 SDK |
 | `HttpBridge` | `gateway/http_bridge.rs` | axum 本地端点 `POST /message` | 请求/响应桥接：入队 → 挂起 oneshot（120s）→ `send()` 回送 HTTP 响应 |
+| `DiscordAdapter` | `gateway/discord.rs` | 裸 `reqwest` 调 Discord REST API | `GET /channels/{id}/messages?after=` 轮询 + `POST` 发送，鉴权 `Bot <token>`；不回放历史（首次置位游标），分页走最旧方向防 >100 漏消息，2s 空闲节流 |
 
-两者均在 `#[cfg(feature = "network")]` 下编译。
+三者均在 `#[cfg(feature = "network")]` 下编译。
 
 ### 3.3 `main.rs` 改造
 
@@ -111,7 +112,10 @@ L2 Pi `settings.json` 亦可叠加 `http_bind` / `http_token`。
 
 第二平台选定 **选项 A：HTTP Webhook 桥接**（v0.1.16）。理由：零平台 SDK、依赖仅 axum（随 `network` 特性），
 且任意平台只要能发 HTTP 即可经 OpenClaw 转发接入，最贴近既定网关路线。
-Discord（选项 B）与"仅重构单平台"（选项 C）未采纳。
+
+首平台之后的**第三平台 `DiscordAdapter`（选项 B）已在 v0.1.21 采纳落地**：同样零 SDK、裸 `reqwest`
+调 Discord REST，复用已验证的 `PlatformAdapter` 抽象与 `run_adapter` 驱动模型，无需新增依赖。
+"仅重构单平台"（选项 C）仍不采纳——抽象已就位，新增平台仅需实现 trait。
 
 ## 7. 验收标准（已达成）
 

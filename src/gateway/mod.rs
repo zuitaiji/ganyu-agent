@@ -22,6 +22,7 @@ use crate::GanyuResult;
 use crate::Value;
 
 /// 入站消息（平台无关）。
+#[derive(Clone)]
 pub struct InboundMessage {
     pub chat_id: String,
     pub user: String,
@@ -99,10 +100,14 @@ pub async fn run_adapter(adapter: Box<dyn PlatformAdapter>, deps: GatewayDeps) -
 }
 
 #[cfg(feature = "network")]
+mod discord;
+#[cfg(feature = "network")]
 mod http_bridge;
 #[cfg(feature = "network")]
 mod telegram;
 
+#[cfg(feature = "network")]
+pub use discord::DiscordAdapter;
 #[cfg(feature = "network")]
 pub use http_bridge::HttpBridge;
 #[cfg(feature = "network")]
@@ -115,6 +120,16 @@ pub async fn build_adapters(cfg: &crate::config::GanyuConfig) -> Vec<Box<dyn Pla
     if let Some(token) = crate::config::read_gateway_token() {
         adapters.push(Box::new(TelegramAdapter::new(&token)));
         println!("[gateway] 已装配 Telegram 适配器");
+    }
+    if let (Some(token), Some(channels)) = crate::config::read_gateway_discord() {
+        if !channels.is_empty() {
+            adapters.push(Box::new(DiscordAdapter::new(
+                &token,
+                channels.clone(),
+                std::time::Duration::from_secs(2),
+            )));
+            println!("[gateway] 已装配 Discord 适配器（{} 频道）", channels.len());
+        }
     }
     if let Some(bind) = &cfg.http_bind {
         // 鉴权 token 随配置传入：非回环绑定且无 token 时 new() 直接拒绝启动（fail-closed）。
