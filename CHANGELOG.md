@@ -7,6 +7,20 @@
 GitHub 侧的 Release Notes 由 `generate_release_notes` 自动生成；
 本文件是仓库内的可读变更历史，按版本倒序排列。
 
+## [v0.1.25]
+
+### 测试（网关网络层覆盖：SlackAdapter）
+- 复用 v0.1.24 引入的零依赖回环 mock HTTP 服务器 `src/gateway/mock_http.rs`，为 `SlackAdapter` 补齐网络层单测 5 项（此前仅覆盖解析纯函数）：
+  - `prime_sets_cursor_without_replaying_history`：首轮仅置位游标、不回放历史；
+  - `poll_returns_new_messages_and_advances_cursor`：拉取新消息并推进游标、同批不重复投递；
+  - `paginates_via_next_cursor_until_has_more_false`：`next_cursor` 多页分页，逐条投递不重复，至 `has_more=false` 停止；
+  - `ok_false_is_detected_and_survives`：Slack 签名坑——API 错误返回 HTTP 200 + `{"ok":false}`，必须显式判别，否则误吞错误体（不回退游标、不 panic）；
+  - `send_posts_with_bearer_auth_and_truncates`：命中 `POST /chat.postMessage`、带 `Bearer` 鉴权、超长截断 3900。
+- `SlackAdapter` 抽 `api_base` 字段（生产仍固定 `SLACK_API`），reqwest 客户端加 `no_proxy()`，使网络层可注入回环 mock 并绕开环境代理——与 v0.1.24 `DiscordAdapter` 的改造对齐。
+
+### 说明
+- 版本 `0.1.24` → `0.1.25`，无新增依赖。至此 L3 四平台适配器（Telegram / HTTP 桥接 / Discord / Slack）的网络层均通过回环 mock 服务器做真实 HTTP 往返验证。
+
 ## [v0.1.24]
 
 ### 测试（网关网络层覆盖：DiscordAdapter）

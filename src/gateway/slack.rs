@@ -46,14 +46,29 @@ pub struct SlackAdapter {
     last_seen: Mutex<HashMap<String, String>>,
     /// 空闲（无新消息）轮询间隔，避免对 Slack Web API 高频触发限流。
     idle_interval: Duration,
+    /// REST 基址。抽成字段是为了让**网络层**可测（测试注入回环 mock 服务器）；
+    /// 生产路径仍固定为 `SLACK_API`。
+    api_base: String,
 }
 
 impl SlackAdapter {
     pub fn new(token: &str, channels: Vec<String>, idle_interval: Duration) -> Self {
+        Self::with_base_url(token, channels, idle_interval, SLACK_API)
+    }
+
+    fn with_base_url(
+        token: &str,
+        channels: Vec<String>,
+        idle_interval: Duration,
+        api_base: &str,
+    ) -> Self {
         // 构建仅在 TLS 后端初始化失败时出错。降级为默认客户端而非 panic——
         // release 配置为 panic=abort，一次 panic 会让整个常驻网关进程（含其他平台）退出。
+        // no_proxy：测试指向 127.0.0.1 的 mock 服务器，必须绕开环境代理，否则 CI 上会串到
+        // 外部代理而连不通（system-proxy 特性会读取 HTTP_PROXY）。
         let client = reqwest::Client::builder()
             .user_agent("ganyu-gateway")
+            .no_proxy()
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         SlackAdapter {
@@ -62,6 +77,7 @@ impl SlackAdapter {
             channels,
             last_seen: Mutex::new(HashMap::new()),
             idle_interval,
+            api_base: api_base.to_string(),
         }
     }
 
@@ -83,7 +99,7 @@ impl SlackAdapter {
     ) -> Option<serde_json::Value> {
         let mut req = self
             .client
-            .get(format!("{SLACK_API}/conversations.history"))
+            .get(format!("{}/conversations.history", self.api_base))
             .query(&[("channel", ch.to_string())])
             .query(&[("limit", PAGE_LIMIT.to_string())]);
         if let Some(o) = oldest {
@@ -212,7 +228,7 @@ impl PlatformAdapter for SlackAdapter {
         // 截断过长回复（见 MAX_MESSAGE_CHARS）。
         let reply: String = text.chars().take(MAX_MESSAGE_CHARS).collect();
         self.client
-            .post(format!("{SLACK_API}/chat.postMessage"))
+            .post(format!("{}/chat.postMessage", self.api_base))
             .header(
                 reqwest::header::AUTHORIZATION,
                 format!("Bearer {}", self.token),
@@ -260,6 +276,10 @@ fn parse_slack_messages(value: &serde_json::Value, channel: &str) -> Vec<(String
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
+    use crate::gateway::mock_http;
+
     use super::*;
 
     /// 解析映射字段：ts / user / text，且 chat_id 由查询频道注入（Slack 响应体不含该字段）。
@@ -308,5 +328,180 @@ mod tests {
     fn new_builds_with_name() {
         let a = SlackAdapter::new("xoxb-tok", vec!["C1".into()], Duration::from_secs(2));
         assert_eq!(a.name(), "slack");
+    }
+
+    // —— 以下为**网络层**测试：指向回环 mock 服务器，覆盖此前只有解析纯函数覆盖不到的
+    //    真实 HTTP 往返（置位不回放、游标推进、next_cursor 分页、ok:false 判别、send 截断）。
+
+    const CH: &str = "C1";
+    const TOKEN: &str = "xoxb-tok";
+
+    /// 构造 `conversations.history` 响应体（Slack 返回「最新在前」）。
+    fn slack_history(messages: &[(&str, &str)], has_more: bool, next_cursor: &str) -> String {
+        let msgs: Vec<serde_json::Value> = messages
+            .iter()
+            .map(|(ts, text)| {
+                serde_json::json!({
+                    "ts": ts.to_string(),
+                    "user": format!("U{ts}"),
+                    "text": text.to_string(),
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "ok": true,
+            "messages": msgs,
+            "has_more": has_more,
+            "response_metadata": { "next_cursor": next_cursor }
+        })
+        .to_string()
+    }
+
+    fn adapter(base_url: &str) -> SlackAdapter {
+        // idle_interval 取 0：无新消息时的节流休眠不应拖慢测试。
+        SlackAdapter::with_base_url(
+            TOKEN,
+            vec![CH.to_string()],
+            Duration::from_millis(0),
+            base_url,
+        )
+    }
+
+    /// 首轮只置位游标，不回放历史。
+    #[tokio::test]
+    async fn prime_sets_cursor_without_replaying_history() {
+        let server = mock_http::spawn(vec![slack_history(
+            &[("1503435956.000247", "m")],
+            false,
+            "",
+        )])
+        .await;
+        let a = adapter(&server.base_url);
+
+        assert!(a.poll().await.expect("poll 不应失败").is_empty());
+        assert_eq!(
+            a.last_seen.lock().await.get(CH).map(String::as_str),
+            Some("1503435956.000247")
+        );
+        let reqs = server.recorded().await;
+        assert_eq!(reqs.len(), 1);
+        assert!(
+            reqs[0].head.starts_with("GET /conversations.history?"),
+            "实际请求: {}",
+            reqs[0].head
+        );
+    }
+
+    /// 拉取新消息并推进游标；同一批消息不会在下一轮重复投递。
+    #[tokio::test]
+    async fn poll_returns_new_messages_and_advances_cursor() {
+        let server = mock_http::spawn(vec![
+            slack_history(&[("500.000000", "m500")], false, ""), // 置位：最新 500
+            slack_history(&[("502.000000", "m502"), ("501.000000", "m501")], false, ""), // 新到 501/502
+            slack_history(&[], false, ""), // 再轮询：无更新
+        ])
+        .await;
+        let a = adapter(&server.base_url);
+
+        assert!(a.poll().await.expect("poll 不应失败").is_empty());
+        let msgs = a.poll().await.expect("poll 不应失败");
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].text, "m502", "Slack 最新在前，应先投递最新一条");
+        assert_eq!(msgs[1].text, "m501");
+        assert_eq!(msgs[0].chat_id, CH);
+        assert_eq!(
+            a.last_seen.lock().await.get(CH).map(String::as_str),
+            Some("502.000000")
+        );
+        assert!(
+            a.poll().await.expect("poll 不应失败").is_empty(),
+            "同一批消息不得重复投递"
+        );
+    }
+
+    /// next_cursor 分页：高吞吐频道多页拉取，逐条投递且不重复，直至 has_more=false。
+    #[tokio::test]
+    async fn paginates_via_next_cursor_until_has_more_false() {
+        let server = mock_http::spawn(vec![
+            slack_history(&[("700.000000", "m700")], false, ""), // 置位：最新 700
+            slack_history(
+                &[("702.000000", "m702"), ("701.000000", "m701")],
+                true,
+                "cur1",
+            ), // 页1
+            slack_history(
+                &[("704.000000", "m704"), ("703.000000", "m703")],
+                true,
+                "cur2",
+            ), // 页2
+            slack_history(&[("705.000000", "m705")], false, ""), // 页3：has_more=false
+        ])
+        .await;
+        let a = adapter(&server.base_url);
+
+        assert!(a.poll().await.expect("poll 不应失败").is_empty());
+        let msgs = a.poll().await.expect("poll 不应失败");
+        assert_eq!(msgs.len(), 5, "三页累计 5 条新消息，逐条投递");
+        let ts: HashSet<&str> = msgs.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(ts.len(), 5, "出现重复投递：next_cursor 分页走法有误");
+        assert_eq!(
+            a.last_seen.lock().await.get(CH).map(String::as_str),
+            Some("705.000000"),
+            "游标应推进到最新一条的 ts"
+        );
+        assert_eq!(
+            server.recorded().await.len(),
+            4,
+            "请求数应恰好等于「置位 + 各分页(3)」，不得多打空转请求"
+        );
+    }
+
+    /// Slack 的签名坑：API 错误返回 HTTP 200 + {"ok":false}，必须显式判别，
+    /// 否则会把错误体当空消息吞掉（不影响游标、不 panic）。
+    #[tokio::test]
+    async fn ok_false_is_detected_and_survives() {
+        let server = mock_http::spawn(vec![
+            slack_history(&[("500.000000", "m500")], false, ""), // 置位：500
+            serde_json::json!({ "ok": false, "error": "invalid_auth" }).to_string(), // 错误体（HTTP 200）
+        ])
+        .await;
+        let a = adapter(&server.base_url);
+
+        assert!(a.poll().await.expect("poll 不应失败").is_empty());
+        let msgs = a.poll().await.expect("ok:false 应自愈为空结果而非报错");
+        assert!(msgs.is_empty());
+        assert_eq!(
+            a.last_seen.lock().await.get(CH).map(String::as_str),
+            Some("500.000000"),
+            "失败不得回退游标，否则会重放历史"
+        );
+    }
+
+    /// 发送：命中 `POST /chat.postMessage`，带 Bearer 鉴权，超长文本截断到 3900。
+    #[tokio::test]
+    async fn send_posts_with_bearer_auth_and_truncates() {
+        let server = mock_http::spawn(vec!["{}".to_string()]).await;
+        let a = adapter(&server.base_url);
+
+        a.send(CH, &"x".repeat(5000)).await.expect("send 不应失败");
+
+        let reqs = server.recorded().await;
+        assert_eq!(reqs.len(), 1);
+        assert!(
+            reqs[0].head.starts_with("POST /chat.postMessage"),
+            "实际请求: {}",
+            reqs[0].head
+        );
+        let head = reqs[0].head.to_ascii_lowercase();
+        assert!(
+            head.contains("authorization: bearer xoxb-tok"),
+            "实际请求头: {head}"
+        );
+        let body: serde_json::Value = serde_json::from_str(&reqs[0].body).expect("请求体应为 JSON");
+        assert_eq!(body["channel"].as_str(), Some(CH));
+        assert_eq!(
+            body["text"].as_str().unwrap().chars().count(),
+            MAX_MESSAGE_CHARS
+        );
     }
 }
