@@ -7,6 +7,25 @@
 GitHub 侧的 Release Notes 由 `generate_release_notes` 自动生成；
 本文件是仓库内的可读变更历史，按版本倒序排列。
 
+## [v0.1.26]
+
+### 测试（网关网络层覆盖：TelegramAdapter）
+- 复用 v0.1.24 引入的零依赖回环 mock HTTP 服务器 `src/gateway/mock_http.rs`，为 `TelegramAdapter` 补齐网络层单测 6 项（此前该适配器零测试）：
+  - `new_builds_with_name`：构造器与名称不变量；
+  - `poll_returns_new_messages_and_advances_offset`：首轮取回消息并推进 `offset`，次轮（offset 已越过）不再回放历史；
+  - `offset_advances_past_all_updates_without_replay`：`offset` 必须越过**所有** update（含无文本 / 非 `message` 键者），而非只越过有效消息，否则被跳过的 update 会在下一轮被重新取回；
+  - `send_posts_to_sendmessage_and_truncates`：命中 `POST /sendMessage`、`chat_id` 解析为 i64、超长截断 4000；非法 `chat_id` 在发请求前即以 `InvalidInput` 失败（不发 HTTP）；
+  - `http_error_is_survivable_and_keeps_offset`：HTTP 500 自愈为空结果、offset 不回退（不重放历史）；
+  - `ok_false_is_detected_and_survives`：Telegram 协议层错误返回 HTTP 200 + `{"ok":false}`，必须显式判别，否则误吞错误体（不回退 offset、不 panic）。
+- `TelegramAdapter` 的 `new` 委托新私方法 `with_base_url`，把既有的 `api: String` 字段显式作为可注入基址，reqwest 客户端加 `no_proxy()`，使网络层可指向回环 mock 并绕开环境代理（与 Discord/Slack 改造对齐）。
+
+### 修复（Telegram 网络层自愈）
+- `poll` 中 `getUpdates` 收到非 2xx 响应（如 Telegram 侧 5xx）时，原代码 `error_for_status()...?` 会把错误**向上传播**，导致适配器在 Telegram 侧事故期间持续报错、常驻网关只能靠 `run_adapter` 自身 2s 重试空转。
+  改为与 Discord/Slack 一致：在 `error_for_status` 失败处退避 3s 并返回空（自愈），不向上抛错。该缺陷由新增的网络层测试 `http_error_is_survivable_and_keeps_offset` 捕获。
+
+### 说明
+- 版本 `0.1.25` → `0.1.26`，无新增依赖。
+
 ## [v0.1.25]
 
 ### 测试（网关网络层覆盖：SlackAdapter）
