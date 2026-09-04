@@ -103,6 +103,10 @@ pub async fn run_adapter(adapter: Box<dyn PlatformAdapter>, deps: GatewayDeps) -
 mod discord;
 #[cfg(feature = "network")]
 mod http_bridge;
+// 测试专用 mock HTTP 服务器：仅单测编译，用于验证适配器**网络层**（分页/游标/错误处理），
+// 而非只验证解析纯函数。
+#[cfg(all(test, feature = "network"))]
+mod mock_http;
 #[cfg(feature = "network")]
 mod slack;
 #[cfg(feature = "network")]

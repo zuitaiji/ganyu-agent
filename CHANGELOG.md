@@ -7,6 +7,30 @@
 GitHub 侧的 Release Notes 由 `generate_release_notes` 自动生成；
 本文件是仓库内的可读变更历史，按版本倒序排列。
 
+## [v0.1.24]
+
+### 测试（网关网络层覆盖：DiscordAdapter）
+- 新增测试专用回环 mock HTTP 服务器 `src/gateway/mock_http.rs`（`cfg(all(test, feature = "network"))`，零新增依赖）：
+  按需按序返回固定响应并记录请求，用于验证适配器**网络层**（此前仅覆盖解析纯函数）。
+- `DiscordAdapter` 网络层单测 5 项（指向 mock 服务器）：
+  - `prime_sets_cursor_without_replaying_history`：首轮仅置位游标、不回放历史；
+  - `poll_returns_new_messages_and_advances_cursor`：拉取新消息并推进游标、同批不重复投递；
+  - `drains_backlog_larger_than_one_page_without_duplicates`：**v0.1.24 回归测试**——积压超一页时逐条投递且不重复；
+  - `fetch_error_is_survivable_and_keeps_cursor`：HTTP 500 自愈为空结果、游标不回退（不重放历史）；
+  - `send_posts_truncated_content_with_bot_auth`：命中 `POST /channels/{id}/messages`、带 `Bot` 鉴权、超长截断 1900。
+
+### 修复（Discord 分页游标走法）
+- `fetch_channel` 由错误的「游标取本页最小 id + `after` 翻页」改为「自最新向过去走」：
+  首页取最新一页，其后以本页最小 id 作 `before` 向更旧处翻，越过游标即停止。
+  旧走法下 Discord 固定「最新在前」，`after=<最小 id>` 会反复取回同一批消息——积压 250 条时
+  投递近 500 条，agent 重复回复同一句话。新走法按服务端原始 id 判定「不足一页 / 越过游标」，
+  bot / 空文本被过滤不影响翻页终止。
+- `api_base` 抽为字段（生产仍固定 `DISCORD_API`），使网络层可注入回环 mock；
+  reqwest 客户端加 `no_proxy()`，避免测试指向 127.0.0.1 时串到环境代理。
+
+### 说明
+- 版本 `0.1.23` → `0.1.24`，无新增依赖。
+
 ## [v0.1.23]
 
 ### 修复（网关自激循环一致性收口）
